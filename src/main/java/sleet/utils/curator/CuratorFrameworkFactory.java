@@ -3,6 +3,14 @@ package sleet.utils.curator;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.retry.ExponentialBackoffRetry;
 
+/**
+ * Basic factory for creating CuratorFramework instances to be used to
+ * coordinate with other sleet id generators in the same ZK cluster.
+ * 
+ * @author mmead
+ * 
+ */
+
 public class CuratorFrameworkFactory {
 
   /**
@@ -10,8 +18,6 @@ public class CuratorFrameworkFactory {
    * ExponentialBackoffRetry strategy with specified base sleep time and number
    * of retries. Starts the instance before returning it. If this is intended to
    * be a singleton, the caller should guard it appropriately.
-   * 
-   * @author matthewcmead
    * 
    * @param zkQuorum
    *          the ZK quorum string (including setroot if desired)
