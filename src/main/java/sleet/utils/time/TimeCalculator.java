@@ -11,10 +11,10 @@ import java.util.concurrent.TimeUnit;
  * 
  */
 public class TimeCalculator {
-  private long epoch;
-  private long granularity;
-  private int bitsInTimeValue;
-  private long maxTimeValue;
+  private final long epoch;
+  private final long granularity;
+  private final int bitsInTimeValue;
+  private final long maxTimeValue;
 
   /**
    * Instantiate a TimeCalculator.
@@ -37,9 +37,7 @@ public class TimeCalculator {
     this.epoch = epoch;
     this.granularity = TimeUnit.MILLISECONDS.convert(granularity, granularityUnit);
     this.bitsInTimeValue = bitsInTimeValue;
-    this.maxTimeValue = 1L;
-    this.maxTimeValue = this.maxTimeValue << this.bitsInTimeValue;
-    this.maxTimeValue = this.maxTimeValue - 1;
+    this.maxTimeValue = (1L << this.bitsInTimeValue) - 1L;
   }
 
   /**
