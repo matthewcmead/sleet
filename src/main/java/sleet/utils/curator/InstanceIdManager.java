@@ -12,19 +12,38 @@ import org.apache.zookeeper.KeeperException.NodeExistsException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher.Event.EventType;
 
+//TODO MCM update this based on discussion with Aaron regarding the need to minimize "racing" against zookeeper.
+//TODO MCM come up with an exception model for this class instead of throwing base level exceptions.
+
+/**
+ * A class to manage (over zookeeper) the act of allocating a currently unique
+ * instance id within a single zookeeper quorum.
+ * 
+ * @author mmead
+ * 
+ */
+
 public class InstanceIdManager implements CuratorListener {
-  private static int CHILD_NODE_NAME_RADIX = 16;
+  private static final int CHILD_NODE_NAME_RADIX = 16;
   private CuratorFramework client = null;
   private String instanceIdParentPath = null;
   private ManagedInstanceIdUser iduser = null;
-  private int maximumId;
+  private final int maximumId;
   private int currentId;
+  private String currentPath = null;
+  private final IdContentionPolicy allocationPolicy;
+  private boolean ignoreWatches = false;
 
-  public InstanceIdManager(String instanceIdParentPath, CuratorFramework client, ManagedInstanceIdUser iduser, int maximumId) {
+  public static enum IdContentionPolicy {
+    BLOCKINDEFINITELY, EXCEPTION
+  }
+
+  public InstanceIdManager(String instanceIdParentPath, CuratorFramework client, ManagedInstanceIdUser iduser, int maximumId, IdContentionPolicy allocationPolicy) {
     this.instanceIdParentPath = instanceIdParentPath;
     this.client = client;
     this.iduser = iduser;
     this.maximumId = maximumId;
+    this.allocationPolicy = allocationPolicy;
   }
 
   private void makeParent() throws Exception {
@@ -42,6 +61,13 @@ public class InstanceIdManager implements CuratorListener {
     getNewId();
   }
 
+  public void stop() throws Exception {
+    if (this.currentPath != null) {
+      this.ignoreWatches = true;
+      client.delete().forPath(this.currentPath);
+    }
+  }
+
   public static interface ManagedInstanceIdUser {
     public void idInvalidated();
 
@@ -53,17 +79,22 @@ public class InstanceIdManager implements CuratorListener {
   @Override
   public void eventReceived(CuratorFramework client, CuratorEvent event) throws Exception {
     System.out.println("eventReceived: " + event.getPath() + "; " + event.getType());
-    if (instanceIdParentPath.equals(event.getPath()) && event.getType().equals(CuratorEventType.WATCHED)) {
-      WatchedEvent we = event.getWatchedEvent();
-      if (we.getType().equals(EventType.NodeDeleted)) {
-        this.iduser.idInvalidated();
-        getNewId();
+    if (!this.ignoreWatches) {
+      if (this.instanceIdParentPath.equals(event.getPath()) && event.getType().equals(CuratorEventType.WATCHED)) {
+        WatchedEvent we = event.getWatchedEvent();
+        if (we.getType().equals(EventType.NodeDeleted)) {
+          this.iduser.idInvalidated();
+          getNewId();
+        }
+        client.getData().watched().forPath(this.instanceIdParentPath);
+      } else if (this.currentPath != null && this.currentPath.equals(event.getPath()) && event.getType().equals(CuratorEventType.WATCHED)) {
+        WatchedEvent we = event.getWatchedEvent();
+        if (we.getType().equals(EventType.NodeDeleted)) {
+          this.iduser.idInvalidated();
+          getNewId();
+        }
       }
-      client.getData().watched().forPath(this.instanceIdParentPath);
     }
-    /**
-     * TODO MCM also detect deletion of id node and appropriately get new id
-     */
   }
 
   private void getNewId() throws Exception {
@@ -71,14 +102,26 @@ public class InstanceIdManager implements CuratorListener {
     int allocatedid = -1;
     while (allocatedid == -1) {
       List<String> idstrs = this.client.getChildren().forPath(instanceIdParentPath);
+      if (idstrs.size() == this.maximumId) {
+        switch (this.allocationPolicy) {
+        case EXCEPTION:
+          /**
+           * TODO MCM use special exception type here for detection by calling
+           * class
+           */
+          throw new Exception("Id space full.");
+        case BLOCKINDEFINITELY:
+          /**
+           * TODO MCM properly block indefinitely while we wait for a child node
+           * to be deleted
+           */
+          break;
+        }
+      }
       int foundunallocatedid = -1;
       if (idstrs.isEmpty()) {
         foundunallocatedid = 0;
       } else {
-        /**
-         * TODO MCM when the list is as long as the maximum number of ids we can
-         * allocate, we either need to fail or wait
-         */
         int[] ids = new int[idstrs.size()];
         int counter = 0;
         for (String id : idstrs) {
@@ -102,7 +145,10 @@ public class InstanceIdManager implements CuratorListener {
       }
 
       try {
-        client.create().withMode(CreateMode.EPHEMERAL).forPath(this.instanceIdParentPath + PATH_SEPARATOR_CHAR + Integer.toString(foundunallocatedid, CHILD_NODE_NAME_RADIX));
+        String path = this.instanceIdParentPath + PATH_SEPARATOR_CHAR + Integer.toString(foundunallocatedid, CHILD_NODE_NAME_RADIX);
+        client.create().withMode(CreateMode.EPHEMERAL).forPath(path);
+        this.currentPath = path;
+        client.getData().watched().forPath(path);
         allocatedid = foundunallocatedid;
       } catch (NodeExistsException e) {
         // ignore
@@ -138,7 +184,7 @@ public class InstanceIdManager implements CuratorListener {
         System.out.println("Id management is no longer possible!");
       }
 
-    }, 4096);
+    }, 4096, IdContentionPolicy.BLOCKINDEFINITELY);
     idm.start();
     while (true) {
       Thread.sleep(1000);
