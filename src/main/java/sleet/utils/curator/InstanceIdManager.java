@@ -1,7 +1,10 @@
 package sleet.utils.curator;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.api.CuratorEvent;
@@ -12,9 +15,6 @@ import org.apache.zookeeper.KeeperException.NodeExistsException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher.Event.EventType;
 
-//TODO MCM update this based on discussion with Aaron regarding the need to minimize "racing" against zookeeper.
-//TODO MCM come up with an exception model for this class instead of throwing base level exceptions.
-
 /**
  * A class to manage (over zookeeper) the act of allocating a currently unique
  * instance id within a single zookeeper quorum.
@@ -24,15 +24,24 @@ import org.apache.zookeeper.Watcher.Event.EventType;
  */
 
 public class InstanceIdManager implements CuratorListener {
+  private static final String LOCK_PATH_EXTENSION = "_lock";
+  private static final String LOCK_NAME = "idmgrlock";
   private static final int CHILD_NODE_NAME_RADIX = 16;
+  private static final long TIMEOUT = 1000;
+  private static final int NUM_IDS = 4;
   private CuratorFramework client = null;
-  private String instanceIdParentPath = null;
-  private ManagedInstanceIdUser iduser = null;
+  private final String instanceIdParentPath;
+  private final ManagedInstanceIdUser iduser;
   private final int maximumId;
   private int currentId;
   private String currentPath = null;
   private final IdContentionPolicy allocationPolicy;
   private boolean ignoreWatches = false;
+  private final String instanceIdParentLockPath;
+  private final Object lock = new Object();
+  private final Object fullLock = new Object();
+  private String currentLockPath = null;
+  private byte[] currentNodeUuid = null;
 
   public static enum IdContentionPolicy {
     BLOCKINDEFINITELY, EXCEPTION
@@ -40,122 +49,251 @@ public class InstanceIdManager implements CuratorListener {
 
   public InstanceIdManager(String instanceIdParentPath, CuratorFramework client, ManagedInstanceIdUser iduser, int maximumId, IdContentionPolicy allocationPolicy) {
     this.instanceIdParentPath = instanceIdParentPath;
+    this.instanceIdParentLockPath = this.instanceIdParentPath + LOCK_PATH_EXTENSION;
     this.client = client;
     this.iduser = iduser;
     this.maximumId = maximumId;
     this.allocationPolicy = allocationPolicy;
   }
 
-  private void makeParent() throws Exception {
+  private void makePath(String path) throws Exception {
     try {
-      client.create().creatingParentsIfNeeded().forPath(this.instanceIdParentPath);
+      client.create().creatingParentsIfNeeded().forPath(path);
     } catch (NodeExistsException e) {
       // ignore
     }
   }
 
+  private void makeParent() throws Exception {
+    makePath(this.instanceIdParentPath);
+  }
+
+  private void makeParentLock() throws Exception {
+    makePath(this.instanceIdParentLockPath);
+  }
+
   public void start() throws Exception {
     makeParent();
-    client.getCuratorListenable().addListener(this);
-    client.getData().watched().forPath(this.instanceIdParentPath);
+    this.client.getCuratorListenable().addListener(this);
+    this.client.getData().watched().forPath(this.instanceIdParentPath);
+    this.client.getChildren().watched().forPath(this.instanceIdParentPath);
     getNewId();
   }
 
   public void stop() throws Exception {
     if (this.currentPath != null) {
       this.ignoreWatches = true;
-      client.delete().forPath(this.currentPath);
+      // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+      // "Deleting; currentId=" + this.currentId + "; currentPath=" +
+      // this.currentPath);
+      this.client.delete().forPath(this.currentPath);
     }
   }
 
   public static interface ManagedInstanceIdUser {
-    public void idInvalidated();
+    public void idInvalidated(InstanceIdManager idm);
 
-    public void newId(int id);
+    public void newId(int id, InstanceIdManager idm);
 
-    public void idManagementImpossible();
+    public void idManagementImpossible(InstanceIdManager idm);
   }
 
   @Override
   public void eventReceived(CuratorFramework client, CuratorEvent event) throws Exception {
-    System.out.println("eventReceived: " + event.getPath() + "; " + event.getType());
-    if (!this.ignoreWatches) {
-      if (this.instanceIdParentPath.equals(event.getPath()) && event.getType().equals(CuratorEventType.WATCHED)) {
-        WatchedEvent we = event.getWatchedEvent();
-        if (we.getType().equals(EventType.NodeDeleted)) {
-          this.iduser.idInvalidated();
-          getNewId();
+    try {
+      // System.out.println("eventReceived: " + event.getPath() + "; " +
+      // event.getType());
+      if (!this.ignoreWatches) {
+        if (event.getPath().startsWith(this.instanceIdParentLockPath)) {
+          /**
+           * the lock code path rewatches on its own
+           */
+          synchronized (this.lock) {
+            this.lock.notify();
+          }
+        } else if (event.getPath().equals(this.instanceIdParentPath)) {
+          // System.out.println(event.getPath() + " : " + event.getType());
+          if (event.getType().equals(CuratorEventType.WATCHED)) {
+            WatchedEvent we = event.getWatchedEvent();
+            // System.out.println(we.getType());
+            if (we.getType().equals(EventType.NodeDeleted)) {
+              this.iduser.idInvalidated(this);
+              // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+              // "Reregistering watch on " + this.instanceIdParentPath);
+              getNewId();
+              client.getData().watched().forPath(this.instanceIdParentPath);
+            } else if (we.getType().equals(EventType.NodeChildrenChanged)) {
+              // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+              // "Reregistering watch on children of " +
+              // this.instanceIdParentPath);
+              client.getChildren().watched().forPath(this.instanceIdParentPath);
+              synchronized (this.fullLock) {
+                // System.out.println(Integer.toHexString(this.hashCode()) + " "
+                // +
+                // "Notifying the locked instance waiting for full id space.");
+                this.fullLock.notify();
+              }
+            } else {
+              // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+              // "Reregistering watch on " + this.instanceIdParentPath);
+              client.getData().watched().forPath(this.instanceIdParentPath);
+            }
+          }
+        } else if (this.currentPath != null && this.currentPath.equals(event.getPath()) && event.getType().equals(CuratorEventType.WATCHED)) {
+          WatchedEvent we = event.getWatchedEvent();
+          if (we.getType().equals(EventType.NodeDeleted)) {
+            byte[] data = this.client.getData().forPath(event.getPath());
+            if (data == null) {
+              // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+              // "Got NodeDeleted for " + event.getPath() +
+              // " and it was actually missing.");
+              this.iduser.idInvalidated(this);
+              getNewId();
+            } else if (!Arrays.equals(this.currentNodeUuid, data)) {
+              // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+              // "Got NodeDeleted for " + event.getPath() + ". Its data is \"" +
+              // new String(data, "UTF-8")
+              // + "\".  My creation data was \"" + new
+              // String(this.currentNodeUuid, "UTF-8") + "\".");
+              this.iduser.idInvalidated(this);
+              getNewId();
+            } else {
+              // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+              // "Got NodeDeleted for " + event.getPath() + ". Its data is \"" +
+              // new String(data, "UTF-8")
+              // + "\".  My creation data was \"" + new
+              // String(this.currentNodeUuid, "UTF-8") +
+              // "\".  Not invalidating.");
+            }
+          }
         }
-        client.getData().watched().forPath(this.instanceIdParentPath);
-      } else if (this.currentPath != null && this.currentPath.equals(event.getPath()) && event.getType().equals(CuratorEventType.WATCHED)) {
-        WatchedEvent we = event.getWatchedEvent();
-        if (we.getType().equals(EventType.NodeDeleted)) {
-          this.iduser.idInvalidated();
-          getNewId();
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+      stop();
+      this.iduser.idManagementImpossible(this);
+    }
+  }
+
+  private void lock() throws Exception {
+    // System.out.println(this + " " + "Attempting to lock...");
+    makeParentLock();
+    String lockPrefix = LOCK_NAME + "_";
+    String lockPath = this.client.create().withMode(CreateMode.EPHEMERAL_SEQUENTIAL).forPath(this.instanceIdParentLockPath + "/" + lockPrefix);
+    this.client.getData().watched().forPath(this.instanceIdParentLockPath);
+    this.client.getData().watched().forPath(lockPath);
+    while (true) {
+      synchronized (this.lock) {
+        List<String> children = filterMatchesPrefix(this.client.getChildren().forPath(this.instanceIdParentLockPath), lockPrefix);
+        Collections.sort(children);
+        String firstElement = children.iterator().next();
+        // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+        // "First lock child: " +
+        // firstElement + "; My lockPath=" + lockPath);
+        if (lockPath.equals(this.instanceIdParentLockPath + "/" + firstElement)) {
+          // got the lock
+          // System.out.println(this + " " + "Got the lock!");
+          this.currentLockPath = lockPath;
+          return;
+        } else {
+          // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+          // "Waiting to get lock... (" + lockPath + ")");
+          this.lock.wait(TIMEOUT);
+          // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+          // "Woken from wait...(" +
+          // lockPath + ")");
         }
       }
     }
   }
 
-  private void getNewId() throws Exception {
-    makeParent();
-    int allocatedid = -1;
-    while (allocatedid == -1) {
-      List<String> idstrs = this.client.getChildren().forPath(instanceIdParentPath);
-      if (idstrs.size() == this.maximumId) {
-        switch (this.allocationPolicy) {
-        case EXCEPTION:
-          /**
-           * TODO MCM use special exception type here for detection by calling
-           * class
-           */
-          throw new Exception("Id space full.");
-        case BLOCKINDEFINITELY:
-          /**
-           * TODO MCM properly block indefinitely while we wait for a child node
-           * to be deleted
-           */
-          break;
-        }
-      }
-      int foundunallocatedid = -1;
-      if (idstrs.isEmpty()) {
-        foundunallocatedid = 0;
-      } else {
-        int[] ids = new int[idstrs.size()];
-        int counter = 0;
-        for (String id : idstrs) {
-          ids[counter] = Integer.parseInt(getLeafValueForNode(id), CHILD_NODE_NAME_RADIX);
-          counter++;
-        }
-        Arrays.sort(ids);
-        int expectedid = 0;
-        for (int i = 0; i < ids.length && foundunallocatedid == -1; i++) {
-          if (ids[i] != expectedid) {
-            foundunallocatedid = expectedid;
-          }
-          expectedid++;
-        }
-        if (foundunallocatedid == -1 && ids.length < maximumId) {
-          foundunallocatedid = expectedid++;
-        }
-      }
-      if (foundunallocatedid == -1) {
-        throw new Exception("Could not allocate an instance id.  The maximum number of instances are operating.");
-      }
+  private void unlock() throws Exception {
+    if (this.currentLockPath != null) {
+      this.client.delete().forPath(this.currentLockPath);
+      this.currentLockPath = null;
+      // System.out.println(this + " " + "Unlocked...");
+    }
+  }
 
-      try {
-        String path = this.instanceIdParentPath + PATH_SEPARATOR_CHAR + Integer.toString(foundunallocatedid, CHILD_NODE_NAME_RADIX);
-        client.create().withMode(CreateMode.EPHEMERAL).forPath(path);
-        this.currentPath = path;
-        client.getData().watched().forPath(path);
-        allocatedid = foundunallocatedid;
-      } catch (NodeExistsException e) {
-        // ignore
+  private List<String> filterMatchesPrefix(List<String> source, String prefix) throws Exception {
+    List<String> ret = new ArrayList<String>(source.size());
+    for (String str : source) {
+      if (str.startsWith(prefix)) {
+        ret.add(str);
       }
     }
-    this.currentId = allocatedid;
-    this.iduser.newId(this.currentId);
+
+    return ret;
+  }
+
+  private void getNewId() throws Exception {
+    makeParent();
+    lock();
+    try {
+      int allocatedid = -1;
+      while (allocatedid == -1) {
+        List<String> idstrs = this.client.getChildren().forPath(instanceIdParentPath);
+        if (idstrs.size() == this.maximumId) {
+          switch (this.allocationPolicy) {
+          case EXCEPTION:
+            throw new InstanceIdSpaceFullException("Id space is full.  All " + this.maximumId + " instance id slots taken.");
+          case BLOCKINDEFINITELY:
+            /**
+             * block indefinitely while we wait for a child node to be deleted
+             */
+            // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+            // "Id space is full.  Waiting for an event to notify us that we can take a look at the id space again.");
+            synchronized (this.fullLock) {
+              this.fullLock.wait();
+            }
+            // System.out.println(Integer.toHexString(this.hashCode()) + " " +
+            // "Possibly no longer full, re-examining id space.");
+            break;
+          }
+        } else {
+          int foundunallocatedid = -1;
+          if (idstrs.isEmpty()) {
+            foundunallocatedid = 0;
+          } else {
+            int[] ids = new int[idstrs.size()];
+            int counter = 0;
+            for (String id : idstrs) {
+              ids[counter] = Integer.parseInt(getLeafValueForNode(id), CHILD_NODE_NAME_RADIX);
+              counter++;
+            }
+            Arrays.sort(ids);
+            int expectedid = 0;
+            for (int i = 0; i < ids.length && foundunallocatedid == -1; i++) {
+              if (ids[i] != expectedid) {
+                foundunallocatedid = expectedid;
+              }
+              expectedid++;
+            }
+            // System.out.println("Found id while looping through: " +
+            // foundunallocatedid);
+            if (foundunallocatedid == -1 && ids.length < maximumId) {
+              foundunallocatedid = expectedid++;
+              // System.out.println("Found id after after looping through: " +
+              // foundunallocatedid);
+            }
+          }
+          if (foundunallocatedid == -1) {
+            throw new Exception("Could not allocate an instance id.  The maximum number of instances are operating.");
+          }
+
+          String path = this.instanceIdParentPath + PATH_SEPARATOR_CHAR + Integer.toString(foundunallocatedid, CHILD_NODE_NAME_RADIX);
+          UUID uuid = UUID.randomUUID();
+          this.currentNodeUuid = uuid.toString().getBytes("UTF-8");
+          this.currentPath = this.client.create().withMode(CreateMode.EPHEMERAL).forPath(path, this.currentNodeUuid);
+          this.client.getData().watched().forPath(this.currentPath);
+          allocatedid = foundunallocatedid;
+          this.currentId = allocatedid;
+          this.iduser.newId(this.currentId, this);
+        }
+      }
+    } finally {
+      unlock();
+    }
   }
 
   private static final char PATH_SEPARATOR_CHAR = '/';
@@ -164,31 +302,4 @@ public class InstanceIdManager implements CuratorListener {
     int lastIndex = path.lastIndexOf(PATH_SEPARATOR_CHAR);
     return lastIndex >= 0 ? path.substring(lastIndex + 1) : path;
   }
-
-  public static void main(String[] args) throws Exception {
-    CuratorFramework client = CuratorFrameworkFactory.instance("mini4,mini7,mini8/sleet", 1000, 1);
-    InstanceIdManager idm = new InstanceIdManager("/sleet/datacenter/1", client, new ManagedInstanceIdUser() {
-
-      @Override
-      public void idInvalidated() {
-        System.out.println("We lost our id!");
-      }
-
-      @Override
-      public void newId(int id) {
-        System.out.println("We got a new id of: " + id);
-      }
-
-      @Override
-      public void idManagementImpossible() {
-        System.out.println("Id management is no longer possible!");
-      }
-
-    }, 4096, IdContentionPolicy.BLOCKINDEFINITELY);
-    idm.start();
-    while (true) {
-      Thread.sleep(1000);
-    }
-  }
-
 }
