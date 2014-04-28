@@ -28,7 +28,6 @@ public class InstanceIdManager implements CuratorListener {
   private static final String LOCK_NAME = "idmgrlock";
   private static final int CHILD_NODE_NAME_RADIX = 16;
   private static final long TIMEOUT = 1000;
-  private static final int NUM_IDS = 4;
   private CuratorFramework client = null;
   private final String instanceIdParentPath;
   private final ManagedInstanceIdUser iduser;
@@ -42,18 +41,25 @@ public class InstanceIdManager implements CuratorListener {
   private final Object fullLock = new Object();
   private String currentLockPath = null;
   private byte[] currentNodeUuid = null;
+  private final long epoch;
 
   public static enum IdContentionPolicy {
     BLOCKINDEFINITELY, EXCEPTION
   }
 
-  public InstanceIdManager(String instanceIdParentPath, CuratorFramework client, ManagedInstanceIdUser iduser, int maximumId, IdContentionPolicy allocationPolicy) {
+  public InstanceIdManager(String instanceIdParentPath, CuratorFramework client, ManagedInstanceIdUser iduser, int maximumId,
+      IdContentionPolicy allocationPolicy, long epoch) {
     this.instanceIdParentPath = instanceIdParentPath;
     this.instanceIdParentLockPath = this.instanceIdParentPath + LOCK_PATH_EXTENSION;
     this.client = client;
     this.iduser = iduser;
     this.maximumId = maximumId;
     this.allocationPolicy = allocationPolicy;
+    this.epoch = epoch;
+  }
+
+  void report(InstanceIdManager inst, String message) {
+    System.out.println((System.currentTimeMillis() - this.epoch) + " " + Integer.toHexString(inst.hashCode()) + " " + message);
   }
 
   private void makePath(String path) throws Exception {
@@ -68,7 +74,7 @@ public class InstanceIdManager implements CuratorListener {
     makePath(this.instanceIdParentPath);
   }
 
-  private void makeParentLock() throws Exception {
+  private void makeLockParent() throws Exception {
     makePath(this.instanceIdParentLockPath);
   }
 
@@ -83,10 +89,30 @@ public class InstanceIdManager implements CuratorListener {
   public void stop() throws Exception {
     if (this.currentPath != null) {
       this.ignoreWatches = true;
-      // System.out.println(Integer.toHexString(this.hashCode()) + " " +
-      // "Deleting; currentId=" + this.currentId + "; currentPath=" +
-      // this.currentPath);
-      this.client.delete().forPath(this.currentPath);
+      report(this, "Stopping...");
+      delete(this.currentPath, true);
+    }
+  }
+
+  private void invalidate() {
+    this.currentId = -1;
+    this.currentPath = null;
+    this.currentLockPath = null;
+    this.currentNodeUuid = null;
+    this.iduser.idInvalidated(this);
+  }
+
+  private void delete(String path, boolean print) throws Exception {
+    int version = this.client.checkExists().forPath(path).getVersion();
+    try {
+      this.client.delete().withVersion(version).forPath(path);
+    } catch (Exception e) {
+      Exception thrown = new Exception("Expected to delete version " + version + " + but ZK couldn\'t delete that version.", e);
+      thrown.printStackTrace();
+      throw thrown;
+    }
+    if (print) {
+      report(this, "Deleted \"" + path + "\" with version=" + version);
     }
   }
 
@@ -101,8 +127,6 @@ public class InstanceIdManager implements CuratorListener {
   @Override
   public void eventReceived(CuratorFramework client, CuratorEvent event) throws Exception {
     try {
-      // System.out.println("eventReceived: " + event.getPath() + "; " +
-      // event.getType());
       if (!this.ignoreWatches) {
         if (event.getPath().startsWith(this.instanceIdParentLockPath)) {
           /**
@@ -112,12 +136,11 @@ public class InstanceIdManager implements CuratorListener {
             this.lock.notify();
           }
         } else if (event.getPath().equals(this.instanceIdParentPath)) {
-          // System.out.println(event.getPath() + " : " + event.getType());
           if (event.getType().equals(CuratorEventType.WATCHED)) {
             WatchedEvent we = event.getWatchedEvent();
             // System.out.println(we.getType());
             if (we.getType().equals(EventType.NodeDeleted)) {
-              this.iduser.idInvalidated(this);
+              invalidate();
               // System.out.println(Integer.toHexString(this.hashCode()) + " " +
               // "Reregistering watch on " + this.instanceIdParentPath);
               getNewId();
@@ -147,23 +170,18 @@ public class InstanceIdManager implements CuratorListener {
               // System.out.println(Integer.toHexString(this.hashCode()) + " " +
               // "Got NodeDeleted for " + event.getPath() +
               // " and it was actually missing.");
-              this.iduser.idInvalidated(this);
+              invalidate();
               getNewId();
             } else if (!Arrays.equals(this.currentNodeUuid, data)) {
-              // System.out.println(Integer.toHexString(this.hashCode()) + " " +
-              // "Got NodeDeleted for " + event.getPath() + ". Its data is \"" +
-              // new String(data, "UTF-8")
-              // + "\".  My creation data was \"" + new
-              // String(this.currentNodeUuid, "UTF-8") + "\".");
-              this.iduser.idInvalidated(this);
+              System.out.println(Integer.toHexString(this.hashCode()) + " " + "Got NodeDeleted for " + event.getPath() + ". Its data is \""
+                  + new String(data, "UTF-8") + "\".  My creation data was \"" + new String(this.currentNodeUuid, "UTF-8") + "\".");
+
+              invalidate();
               getNewId();
             } else {
-              // System.out.println(Integer.toHexString(this.hashCode()) + " " +
-              // "Got NodeDeleted for " + event.getPath() + ". Its data is \"" +
-              // new String(data, "UTF-8")
-              // + "\".  My creation data was \"" + new
-              // String(this.currentNodeUuid, "UTF-8") +
-              // "\".  Not invalidating.");
+              System.out.println(Integer.toHexString(this.hashCode()) + " " + "Got NodeDeleted for " + event.getPath() + ". Its data is \""
+                  + new String(data, "UTF-8") + "\".  My creation data was \"" + new String(this.currentNodeUuid, "UTF-8") + "\".  Not invalidating.");
+
             }
           }
         }
@@ -177,31 +195,20 @@ public class InstanceIdManager implements CuratorListener {
 
   private void lock() throws Exception {
     // System.out.println(this + " " + "Attempting to lock...");
-    makeParentLock();
+    makeLockParent();
     String lockPrefix = LOCK_NAME + "_";
     String lockPath = this.client.create().withMode(CreateMode.EPHEMERAL_SEQUENTIAL).forPath(this.instanceIdParentLockPath + "/" + lockPrefix);
-    this.client.getData().watched().forPath(this.instanceIdParentLockPath);
-    this.client.getData().watched().forPath(lockPath);
     while (true) {
       synchronized (this.lock) {
-        List<String> children = filterMatchesPrefix(this.client.getChildren().forPath(this.instanceIdParentLockPath), lockPrefix);
+        List<String> children = filterMatchesPrefix(this.client.getChildren().watched().forPath(this.instanceIdParentLockPath), lockPrefix);
         Collections.sort(children);
         String firstElement = children.iterator().next();
-        // System.out.println(Integer.toHexString(this.hashCode()) + " " +
-        // "First lock child: " +
-        // firstElement + "; My lockPath=" + lockPath);
         if (lockPath.equals(this.instanceIdParentLockPath + "/" + firstElement)) {
           // got the lock
-          // System.out.println(this + " " + "Got the lock!");
           this.currentLockPath = lockPath;
           return;
         } else {
-          // System.out.println(Integer.toHexString(this.hashCode()) + " " +
-          // "Waiting to get lock... (" + lockPath + ")");
           this.lock.wait(TIMEOUT);
-          // System.out.println(Integer.toHexString(this.hashCode()) + " " +
-          // "Woken from wait...(" +
-          // lockPath + ")");
         }
       }
     }
@@ -209,9 +216,8 @@ public class InstanceIdManager implements CuratorListener {
 
   private void unlock() throws Exception {
     if (this.currentLockPath != null) {
-      this.client.delete().forPath(this.currentLockPath);
+      delete(this.currentLockPath, false);
       this.currentLockPath = null;
-      // System.out.println(this + " " + "Unlocked...");
     }
   }
 

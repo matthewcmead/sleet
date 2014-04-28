@@ -23,6 +23,7 @@ public class TestInstanceIdManager {
   private static final int NUM_IDS = 4;
 
   public static void main(String[] args) throws Exception {
+    final long start = System.currentTimeMillis();
     ZkMiniCluster cluster = new ZkMiniCluster();
     File temp = File.createTempFile("instanceidmanager", "");
     temp.delete();
@@ -38,14 +39,14 @@ public class TestInstanceIdManager {
 
       @Override
       public void run() {
-        for (int i = 0; i < NUM_IDS * 20; i++) {
+        for (int i = 0; i < NUM_IDS * 5; i++) {
           InstanceIdManager idm = new InstanceIdManager("/sleet/datacenter/1", client, new ManagedInstanceIdUser() {
             private int id;
             private Object idLock = new Object();
 
             @Override
             public void idInvalidated(InstanceIdManager idm) {
-              System.out.println(Integer.toHexString(idm.hashCode()) + " " + "Thread: " + "We lost our id (" + this.id + ")!");
+              idm.report(idm, "Thread: " + "We lost our id (" + this.id + ")!");
               synchronized (this.idLock) {
                 this.id = -1;
               }
@@ -53,7 +54,7 @@ public class TestInstanceIdManager {
 
             @Override
             public void newId(int id, InstanceIdManager idm) {
-              System.out.println(Integer.toHexString(idm.hashCode()) + " " + "Thread: " + "We got a new id of: " + id);
+              idm.report(idm, "Thread: " + "We got a new id of: " + id);
               synchronized (this.idLock) {
                 this.id = id;
               }
@@ -61,10 +62,10 @@ public class TestInstanceIdManager {
 
             @Override
             public void idManagementImpossible(InstanceIdManager idm) {
-              System.out.println(Integer.toHexString(idm.hashCode()) + " " + "Thread: " + "Id management is no longer possible!");
+              idm.report(idm, "Thread: " + "Id management is no longer possible!");
             }
 
-          }, NUM_IDS, IdContentionPolicy.BLOCKINDEFINITELY);
+          }, NUM_IDS, IdContentionPolicy.BLOCKINDEFINITELY, start);
           try {
             // System.out.println("Starting new InstanceIdManager.");
             idm.start();
@@ -123,7 +124,7 @@ public class TestInstanceIdManager {
 
         @Override
         public void idInvalidated(InstanceIdManager idm) {
-          System.out.println(Integer.toHexString(idm.hashCode()) + " " + "Main: " + "We lost our id (" + this.id + ")!");
+          idm.report(idm, "Main: " + "We lost our id (" + this.id + ")!");
           synchronized (this.idLock) {
             this.id = -1;
           }
@@ -131,7 +132,7 @@ public class TestInstanceIdManager {
 
         @Override
         public void newId(int id, InstanceIdManager idm) {
-          System.out.println(Integer.toHexString(idm.hashCode()) + " " + "Main: " + "We got a new id of: " + id);
+          idm.report(idm, "Main: " + "We got a new id of: " + id);
           synchronized (this.idLock) {
             this.id = id;
           }
@@ -139,10 +140,10 @@ public class TestInstanceIdManager {
 
         @Override
         public void idManagementImpossible(InstanceIdManager idm) {
-          System.out.println(Integer.toHexString(idm.hashCode()) + " " + "Main: " + "Id management is no longer possible!");
+          idm.report(idm, "Id management is no longer possible!");
         }
 
-      }, NUM_IDS, IdContentionPolicy.EXCEPTION);
+      }, NUM_IDS, IdContentionPolicy.EXCEPTION, start);
       try {
         idm.start();
       } catch (Exception e) {
