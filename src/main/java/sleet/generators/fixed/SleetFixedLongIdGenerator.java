@@ -5,6 +5,7 @@ import java.util.Properties;
 
 import sleet.SleetException;
 import sleet.generators.GeneratorConfigException;
+import sleet.generators.GeneratorSessionException;
 import sleet.generators.IdGenerator;
 import sleet.id.LongId;
 import sleet.id.LongIdType;
@@ -32,17 +33,23 @@ public class SleetFixedLongIdGenerator implements IdGenerator<LongIdType> {
 
   @Override
   public void checkSessionValidity() throws SleetException {
-    if (this.value == null) {
-      
-    }
+    validateSessionStarted();
   }
 
   @Override
   public void endIdSession() throws SleetException {
+    validateSessionStarted();
   }
 
   @Override
   public LongIdType getId(List<IdState<?>> states) throws SleetException {
+    validateSessionStarted();
     return this.value;
+  }
+
+  private void validateSessionStarted() throws GeneratorSessionException {
+    if (this.value == null) {
+      throw new GeneratorSessionException("Session was not started.  Start session by calling beginIdSession()");
+    }
   }
 }
