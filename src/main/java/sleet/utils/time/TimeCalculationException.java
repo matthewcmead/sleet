@@ -1,6 +1,8 @@
 package sleet.utils.time;
 
-public class TimeCalculationException extends Exception {
+import sleet.SleetException;
+
+public class TimeCalculationException extends SleetException {
 
   /**
    * generated
