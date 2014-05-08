@@ -11,7 +11,7 @@ import sleet.id.LongIdType;
 import sleet.id.TimeIdType;
 import sleet.state.IdState;
 
-public class SleetTimeDependentSequenceIdGenerator implements IdGenerator<LongIdType> {
+public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType> {
   public static final String BITS_IN_SEQUENCE_KEY = "sequence.bits.in.sequence.value";
 
   private long maxSequenceValue = -1;
@@ -27,7 +27,7 @@ public class SleetTimeDependentSequenceIdGenerator implements IdGenerator<LongId
     try {
       bits = Long.valueOf(bitsStr);
     } catch (NumberFormatException e) {
-      throw new GeneratorConfigException("Failed to numbe of bits from value \"" + bitsStr + "\".  The value for configuration properties key \"" + BITS_IN_SEQUENCE_KEY + "\" must be a long.");
+      throw new GeneratorConfigException("Failed to parse number of bits from value \"" + bitsStr + "\".  The value for configuration properties key \"" + BITS_IN_SEQUENCE_KEY + "\" must be a long.");
     }
 
     this.maxSequenceValue = (1L << bits) - 1L;

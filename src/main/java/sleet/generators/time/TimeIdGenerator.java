@@ -18,7 +18,7 @@ import sleet.utils.time.TimeCalculator;
  * @author mmead
  *
  */
-public class SleetTimeIdGenerator implements IdGenerator<TimeIdType> {
+public class TimeIdGenerator implements IdGenerator<TimeIdType> {
   private TimeCalculator timeCalc;
   
   /**

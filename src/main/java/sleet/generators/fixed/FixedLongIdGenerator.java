@@ -11,7 +11,7 @@ import sleet.id.LongId;
 import sleet.id.LongIdType;
 import sleet.state.IdState;
 
-public class SleetFixedLongIdGenerator implements IdGenerator<LongIdType> {
+public class FixedLongIdGenerator implements IdGenerator<LongIdType> {
   public static final String FIXED_LONG_VALUE_KEY = "fixed.long.value";
   
   private LongId value = null;
