@@ -53,13 +53,17 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
         if (timeIdType == null) {
           timeIdType = (TimeIdType) state.getId();
         } else {
-          /**
-           * TODO MCM change this to a meaningful typed exception
-           */
-          throw new SleetException(this.getClass().getName() + " depends on there being a single preceeding TimeIdType id, but found at least two.");
+          throw new TimeDependencyException(this.getClass().getName() + " depends on there being a single preceeding TimeIdType id, but found at least two.");
         }
       }
     }
+    if (timeIdType == null) {
+      throw new TimeDependencyException(this.getClass().getName() + " depend on there being a single preceeding TimeIdTYpe id, but found none.");
+    }
+    
+    /**
+     * TODO MCM examine the time id, generate a new id in the sequence or block until a new time unit occurs
+     */
     
     return null;
   }
