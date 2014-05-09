@@ -7,6 +7,7 @@ import sleet.SleetException;
 import sleet.generators.GeneratorConfigException;
 import sleet.generators.GeneratorSessionException;
 import sleet.generators.IdGenerator;
+import sleet.id.LongId;
 import sleet.id.LongIdType;
 import sleet.id.TimeIdType;
 import sleet.state.IdState;
@@ -17,17 +18,23 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
   private long maxSequenceValue = -1;
   private long lastTimeValue = -1;
 
+  private Object lock = new Object();
+  private long sequenceValue = 0;
+
   @Override
   public void beginIdSession(Properties config) throws SleetException {
     String bitsStr = config.getProperty(BITS_IN_SEQUENCE_KEY);
     if (bitsStr == null) {
-      throw new GeneratorConfigException("Missing number of bits for the sequence value, must be specified in configuration properties key \"" + BITS_IN_SEQUENCE_KEY + "\".");
+      throw new GeneratorConfigException(
+          "Missing number of bits for the sequence value, must be specified in configuration properties key \""
+              + BITS_IN_SEQUENCE_KEY + "\".");
     }
     long bits = -1;
     try {
       bits = Long.valueOf(bitsStr);
     } catch (NumberFormatException e) {
-      throw new GeneratorConfigException("Failed to parse number of bits from value \"" + bitsStr + "\".  The value for configuration properties key \"" + BITS_IN_SEQUENCE_KEY + "\" must be a long.");
+      throw new GeneratorConfigException("Failed to parse number of bits from value \"" + bitsStr
+          + "\".  The value for configuration properties key \"" + BITS_IN_SEQUENCE_KEY + "\" must be a long.");
     }
 
     this.maxSequenceValue = (1L << bits) - 1L;
@@ -47,25 +54,48 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
   @Override
   public LongIdType getId(List<IdState<?>> states) throws SleetException {
     validateSessionStarted();
-    TimeIdType timeIdType = null; 
+    TimeIdType timeIdType = null;
     for (IdState<?> state : states) {
       if (TimeIdType.class.isAssignableFrom(state.getGeneratorClass())) {
         if (timeIdType == null) {
           timeIdType = (TimeIdType) state.getId();
         } else {
-          throw new TimeDependencyException(this.getClass().getName() + " depends on there being a single preceeding TimeIdType id, but found at least two.");
+          throw new TimeDependencyException(this.getClass().getName()
+              + " depends on there being a single preceeding TimeIdType id, but found at least two.");
         }
       }
     }
     if (timeIdType == null) {
-      throw new TimeDependencyException(this.getClass().getName() + " depend on there being a single preceeding TimeIdTYpe id, but found none.");
+      throw new TimeDependencyException(this.getClass().getName()
+          + " depend on there being a single preceeding TimeIdType id, but found none.");
     }
-    
+
     /**
-     * TODO MCM examine the time id, generate a new id in the sequence or block until a new time unit occurs
+     * TODO MCM examine the time id, generate a new id in the sequence or reset
+     * the sequence
      */
-    
-    return null;
+    long currentTimeValue = timeIdType.getId();
+    long returnValue = -1;
+    synchronized (lock) {
+      if (currentTimeValue < this.lastTimeValue) {
+        throw new TimeDependencyException(
+            this.getClass().getName()
+                + " depends on the preceeding id generator which generated the TimeIdType to guard against the TimeIdType values decreasing over time");
+      } else if (currentTimeValue == this.lastTimeValue) {
+        if (this.sequenceValue > this.maxSequenceValue) {
+          // TODO MCM should we check for overflow to negative?
+          throw new SequenceOverflowException(this.getClass().getName() + " overflowed the maximum sequence value when allocating a sequence id for time value \"" + currentTimeValue + "\".");
+        } else {
+          returnValue = this.sequenceValue;
+          this.sequenceValue++;
+        }
+      } else {
+        this.sequenceValue = 0;
+        returnValue = this.sequenceValue;
+        this.sequenceValue++;
+      }
+    }
+    return new LongId(returnValue);
   }
 
   private void validateSessionStarted() throws GeneratorSessionException {

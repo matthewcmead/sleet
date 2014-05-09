@@ -88,6 +88,17 @@ public class TimeCalculator {
     }
     return timevalue;
   }
+  
+  public long millisSinceJavaEpochUTC(long timeValue) throws TimeCalculationException {
+    if (timeValue > this.maxTimeValue) {
+      throw new TimeCalculationException("Time value provided overflowed the number of time bits specified (" + this.bitsInTimeValue + ").");
+    }
+    if (timeValue < 0) {
+      throw new TimeCalculationException("Time value provided overflowed the maximum of 63 bits allowed by this implementation.");
+    }
+    
+    return this.epoch + (timeValue * this.granularity);
+  }
 
   public static void main(String[] args) throws Exception {
     Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
