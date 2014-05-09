@@ -7,9 +7,9 @@ import sleet.SleetException;
 import sleet.id.IdType;
 import sleet.state.IdState;
 
-public interface IdGenerator<T extends IdType<?>> {
+public interface IdGenerator<T extends IdType<?, ?>> {
   public void beginIdSession(Properties config) throws SleetException;
   public void checkSessionValidity() throws SleetException;
   public void endIdSession() throws SleetException;
-  public IdType<?> getId(List<IdState<?>> states) throws SleetException;
+  public IdType<?, ?> getId(List<IdState<?, ?>> states) throws SleetException;
 }

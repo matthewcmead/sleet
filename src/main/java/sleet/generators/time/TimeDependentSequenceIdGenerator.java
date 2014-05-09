@@ -52,10 +52,10 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
   }
 
   @Override
-  public LongIdType getId(List<IdState<?>> states) throws SleetException {
+  public LongIdType getId(List<IdState<?, ?>> states) throws SleetException {
     validateSessionStarted();
     TimeIdType timeIdType = null;
-    for (IdState<?> state : states) {
+    for (IdState<?, ?> state : states) {
       if (TimeIdType.class.isAssignableFrom(state.getGeneratorClass())) {
         if (timeIdType == null) {
           timeIdType = (TimeIdType) state.getId();
@@ -78,13 +78,22 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
     long returnValue = -1;
     synchronized (lock) {
       if (currentTimeValue < this.lastTimeValue) {
-        throw new TimeDependencyException(
-            this.getClass().getName()
-                + " depends on the preceeding id generator which generated the TimeIdType to guard against the TimeIdType values decreasing over time");
+        final String message = this.getClass().getName() + " depends on the preceeding id generator which generated the TimeIdType to guard against the TimeIdType values decreasing over time";
+        return new LongId(-1, new TimeIdReverseSkewError() {
+          @Override
+          public String getErrorMessage() {
+            return message;
+          }
+        });
       } else if (currentTimeValue == this.lastTimeValue) {
-        if (this.sequenceValue > this.maxSequenceValue) {
-          // TODO MCM should we check for overflow to negative?
-          throw new SequenceOverflowException(this.getClass().getName() + " overflowed the maximum sequence value when allocating a sequence id for time value \"" + currentTimeValue + "\".");
+        if (this.sequenceValue > this.maxSequenceValue || this.sequenceValue < 0) {
+          final String message = this.getClass().getName() + " overflowed the maximum sequence value when allocating a sequence id for time value \"" + currentTimeValue + "\".";
+          return new LongId(-1, new SequenceIdOverflowError() {
+            @Override
+            public String getErrorMessage() {
+              return message;
+            }
+          });
         } else {
           returnValue = this.sequenceValue;
           this.sequenceValue++;
@@ -95,7 +104,7 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
         this.sequenceValue++;
       }
     }
-    return new LongId(returnValue);
+    return new LongId(returnValue, null);
   }
 
   private void validateSessionStarted() throws GeneratorSessionException {

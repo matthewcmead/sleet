@@ -77,9 +77,12 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
   }
 
   @Override
-  public TimeIdType getId(List<IdState<?>> states) throws SleetException {
+  public TimeIdType getId(List<IdState<?, ?>> states) throws SleetException {
     validateSessionStarted();
-    return new TimeId(this.timeCalc.timeValue());
+    /**
+     * TODO MCM validate the clock didn't move backward enough to reduce the time value since last time
+     */
+    return new TimeId(this.timeCalc.timeValue(), null);
   }
 
   @Override

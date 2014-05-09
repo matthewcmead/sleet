@@ -1,5 +1,5 @@
 package sleet.id;
 
-public interface TimeIdType extends LongIdType {
+public interface TimeIdType extends IdType<Long, TimeIdError> {
 
 }

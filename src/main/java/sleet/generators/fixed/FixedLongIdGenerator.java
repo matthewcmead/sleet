@@ -7,6 +7,7 @@ import sleet.SleetException;
 import sleet.generators.GeneratorConfigException;
 import sleet.generators.GeneratorSessionException;
 import sleet.generators.IdGenerator;
+import sleet.id.IdError;
 import sleet.id.LongId;
 import sleet.id.LongIdType;
 import sleet.state.IdState;
@@ -28,7 +29,7 @@ public class FixedLongIdGenerator implements IdGenerator<LongIdType> {
     } catch (NumberFormatException e) {
       throw new GeneratorConfigException("Failed to parse long value from value \"" + valueStr + "\".  The value for configuration properties key \"" + FIXED_LONG_VALUE_KEY + "\" must be a long.");
     }
-    this.value = new LongId(value);
+    this.value = new LongId(value, null);
   }
 
   @Override
@@ -42,7 +43,7 @@ public class FixedLongIdGenerator implements IdGenerator<LongIdType> {
   }
 
   @Override
-  public LongIdType getId(List<IdState<?>> states) throws SleetException {
+  public LongIdType getId(List<IdState<?, ?>> states) throws SleetException {
     validateSessionStarted();
     return this.value;
   }
