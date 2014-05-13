@@ -78,22 +78,10 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
     long returnValue = -1;
     synchronized (lock) {
       if (currentTimeValue < this.lastTimeValue) {
-        final String message = this.getClass().getName() + " depends on the preceeding id generator which generated the TimeIdType to guard against the TimeIdType values decreasing over time";
-        return new LongId(-1, new TimeIdReverseSkewError() {
-          @Override
-          public String getErrorMessage() {
-            return message;
-          }
-        });
+        return new LongId(-1, new TimeIdReverseSkewError(this.getClass().getName() + " depends on the preceeding id generator which generated the TimeIdType to guard against the TimeIdType values decreasing over time"));
       } else if (currentTimeValue == this.lastTimeValue) {
         if (this.sequenceValue > this.maxSequenceValue || this.sequenceValue < 0) {
-          final String message = this.getClass().getName() + " overflowed the maximum sequence value when allocating a sequence id for time value \"" + currentTimeValue + "\".";
-          return new LongId(-1, new SequenceIdOverflowError() {
-            @Override
-            public String getErrorMessage() {
-              return message;
-            }
-          });
+          return new LongId(-1, new SequenceIdOverflowError(this.getClass().getName() + " overflowed the maximum sequence value when allocating a sequence id for time value \"" + currentTimeValue + "\"."));
         } else {
           returnValue = this.sequenceValue;
           this.sequenceValue++;

@@ -1,7 +1,11 @@
 package sleet.generators.time;
 
-import sleet.id.IdError;
+import sleet.id.BaseIdError;
 
-public interface SequenceIdOverflowError extends IdError {
 
+public class SequenceIdOverflowError extends BaseIdError {
+
+  public SequenceIdOverflowError(String message) {
+    super(message);
+  }
 }

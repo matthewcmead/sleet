@@ -19,7 +19,6 @@ import sleet.utils.time.TimeCalculator;
  *
  */
 public class TimeIdGenerator implements IdGenerator<TimeIdType> {
-  private TimeCalculator timeCalc;
   
   /**
    * TODO MCM handle configuration for what to do with backward clock skew
@@ -27,7 +26,10 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
   public static final String EPOCH_KEY = "time.epoch.in.java.system.time.millis";
   public static final String GRANULARITY_IN_MS_KEY = "time.granularity.milliseconds";
   public static final String BITS_IN_TIME_VALUE_KEY = "time.bits.in.time.value";
-  
+
+  private TimeCalculator timeCalc;
+  private long lastTimeValue = -1;
+
   @Override
   public void endIdSession() throws SleetException {
     validateSessionStarted();
@@ -82,6 +84,22 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
     /**
      * TODO MCM validate the clock didn't move backward enough to reduce the time value since last time
      */
+    long timeValue = this.timeCalc.timeValue();
+    if (timeValue < this.lastTimeValue) {
+      if (false /* use configuration for when to just sleep for the right number of milliseconds) */) {
+        /**
+         * TODO MCM if config allows us to sleep, just sleep, otherwise we error below for the process above to handle
+         */
+      } else {
+        /**
+         * TODO MCM should this contain a mechanism for conveying how long to sleep?
+         */
+        long deltaMs = this.timeCalc.millisSinceJavaEpochUTC(this.lastTimeValue) - this.timeCalc.millisSinceJavaEpochUTC(timeValue);
+        return new TimeId(timeValue, new TimeIdReverseSkewError("Time skewed backward by " + deltaMs + "ms."));
+      }
+    } else {
+      
+    }
     return new TimeId(this.timeCalc.timeValue(), null);
   }
 

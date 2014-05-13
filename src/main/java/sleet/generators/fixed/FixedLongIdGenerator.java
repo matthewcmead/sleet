@@ -7,7 +7,6 @@ import sleet.SleetException;
 import sleet.generators.GeneratorConfigException;
 import sleet.generators.GeneratorSessionException;
 import sleet.generators.IdGenerator;
-import sleet.id.IdError;
 import sleet.id.LongId;
 import sleet.id.LongIdType;
 import sleet.state.IdState;
