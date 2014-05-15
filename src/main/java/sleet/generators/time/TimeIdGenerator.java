@@ -38,6 +38,9 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
 
   @Override
   public void beginIdSession(Properties config) throws SleetException {
+    if (this.timeCalc != null) {
+      throw new GeneratorSessionException("Session was already started.  Stop session by calling endIdSession() then start session by calling beginIdSession()");
+    }
     String epochStr = config.getProperty(EPOCH_KEY);
     if (epochStr == null) {
       throw new GeneratorConfigException("Missing epoch for time calculation, must be specified in configuration properties key \"" + EPOCH_KEY + "\".");

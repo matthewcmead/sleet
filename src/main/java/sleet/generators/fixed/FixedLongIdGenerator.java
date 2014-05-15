@@ -18,6 +18,9 @@ public class FixedLongIdGenerator implements IdGenerator<LongIdType> {
 
   @Override
   public void beginIdSession(Properties config) throws SleetException {
+    if (this.value != null) {
+      throw new GeneratorSessionException("Session was already started.  Stop session by calling endIdSession() then start session by calling beginIdSession()");
+    }
     String valueStr = config.getProperty(FIXED_LONG_VALUE_KEY);
     if (valueStr == null) {
       throw new GeneratorConfigException("Missing value for fixed long id generation, must be specified in configuration properties key \"" + FIXED_LONG_VALUE_KEY + "\".");
@@ -39,6 +42,7 @@ public class FixedLongIdGenerator implements IdGenerator<LongIdType> {
   @Override
   public void endIdSession() throws SleetException {
     validateSessionStarted();
+    this.value = null;
   }
 
   @Override

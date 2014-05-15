@@ -34,8 +34,8 @@ public abstract class InstanceIdManager {
    *         not successful < 0.
    * @throws IOException
    */
-  public abstract int tryToGetId() throws IOException;
-
+  public abstract int tryToGetId(long millisToWait) throws IOException;
+  public abstract boolean sessionValid();
   public abstract void releaseId(int id) throws IOException;
 
 }

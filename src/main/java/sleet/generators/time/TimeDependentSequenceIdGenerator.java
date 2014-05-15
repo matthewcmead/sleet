@@ -23,6 +23,9 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
 
   @Override
   public void beginIdSession(Properties config) throws SleetException {
+    if (this.maxSequenceValue != -1) {
+      throw new GeneratorSessionException("Session was already started.  Stop session by calling endIdSession() then start session by calling beginIdSession()");
+    }
     String bitsStr = config.getProperty(BITS_IN_SEQUENCE_KEY);
     if (bitsStr == null) {
       throw new GeneratorConfigException(

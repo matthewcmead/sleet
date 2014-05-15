@@ -16,6 +16,7 @@
  */
 package sleet.utils.zookeeper;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -28,6 +29,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.zookeeper.CreateMode;
@@ -38,107 +40,25 @@ import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.Stat;
 
+import sleet.utils.curator.ZkMiniCluster;
+
 public class InstanceIdManagerZooKeeper extends InstanceIdManager {
 
-  public static void main(String[] args) throws IOException, InterruptedException, KeeperException {
-    ZooKeeper zooKeeper = new ZooKeeper("localhost", 10000, new Watcher() {
-      @Override
-      public void process(WatchedEvent event) {
+  private static final long _sessionValidityCacheTTL = 1000L;
+  private static final long _waitForIdQueueTimeout = 1000L;
+  private static final long _checkThreadPeriod = 10000L;
 
-      }
-    });
-    String path = "/id-manager";
-    rmr(zooKeeper, path);
-    final InstanceIdManagerZooKeeper idManagerZooKeeper = new InstanceIdManagerZooKeeper(zooKeeper, path, 10);
-    {
-      int id1 = idManagerZooKeeper.tryToGetId();
-      System.out.println(id1);
-      idManagerZooKeeper.releaseId(id1);
-    }
-    {
-      int id1 = idManagerZooKeeper.tryToGetId();
-      System.out.println(id1);
-      idManagerZooKeeper.releaseId(id1);
-    }
-    {
-      int[] ids = new int[12];
-      for (int i = 0; i < ids.length; i++) {
-        ids[i] = idManagerZooKeeper.tryToGetId();
-      }
-
-      for (int i = 0; i < ids.length; i++) {
-        System.out.println(ids[i]);
-      }
-
-      for (int i = 0; i < ids.length; i++) {
-        idManagerZooKeeper.releaseId(ids[i]);
-      }
-    }
-
-    {
-      ExecutorService service = Executors.newCachedThreadPool();
-      Random random = new Random();
-      final AtomicInteger count = new AtomicInteger();
-      int maxWorkers = 100;
-      List<Future<Void>> futures = new ArrayList<>();
-      for (int i = 0; i < maxWorkers; i++) {
-        final int secondToWork = random.nextInt(2) + 1;
-        final int index = i;
-        futures.add(service.submit(new Callable<Void>() {
-          @Override
-          public Void call() throws Exception {
-            int id;
-            int attempts = 0;
-            do {
-              if (attempts > 0) {
-                Thread.sleep(100);
-              }
-              id = idManagerZooKeeper.tryToGetId();
-              attempts++;
-            } while (id < 0);
-            try {
-              System.out.println("[" + index + "] Working for [" + secondToWork + "] seconds with id [" + id + "]");
-              Thread.sleep(TimeUnit.SECONDS.toMillis(secondToWork));
-            } finally {
-              System.out.println("[" + index + "] Releasing with id [" + id + "]");
-              idManagerZooKeeper.releaseId(id);
-              count.incrementAndGet();
-            }
-            return null;
-          }
-        }));
-      }
-      for (Future<Void> future : futures) {
-        try {
-          future.get();
-        } catch (ExecutionException e) {
-          Throwable cause = e.getCause();
-          cause.printStackTrace();
-        }
-      }
-      while (count.get() < maxWorkers) {
-        System.out.println(count.get() + " " + maxWorkers);
-        Thread.sleep(TimeUnit.SECONDS.toMillis(1));
-      }
-      service.shutdown();
-      service.awaitTermination(1, TimeUnit.DAYS);
-    }
-
-    zooKeeper.close();
-  }
-
-  private static void rmr(ZooKeeper zooKeeper, String path) throws KeeperException, InterruptedException {
-    List<String> children = zooKeeper.getChildren(path, false);
-    for (String s : children) {
-      rmr(zooKeeper, path + "/" + s);
-    }
-    zooKeeper.delete(path, -1);
-  }
 
   private final int _maxInstances;
   private final ZooKeeper _zooKeeper;
   private final String _idPath;
   private final String _lockPath;
+  private final AtomicBoolean _sessionValid = new AtomicBoolean(true);
+  private boolean _sessionValidCache = true;
+  private String _assignedNode = null;
+  private Stat _initialStat = null;
+  private Thread _sessionChecker = null;
+  private long _lastSessionCacheUpdate = -1;
 
   public InstanceIdManagerZooKeeper(ZooKeeper zooKeeper, String path, int maxInstances) throws IOException {
     _maxInstances = maxInstances;
@@ -166,36 +86,73 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
   }
 
   @Override
-  public int tryToGetId() throws IOException {
-    final String lock = lock();
-    try {
-      String newPath = _zooKeeper.create(_idPath + "/id_", null, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
-      List<String> children = new ArrayList<>(_zooKeeper.getChildren(_idPath, false));
-      Collections.sort(children);
-      String newNode = newPath.substring(newPath.lastIndexOf('/') + 1);
-      int count = 0;
-      for (String s : children) {
-        if (newNode.equals(s)) {
-          break;
+  public int tryToGetId(long millisToWait) throws IOException {
+    final long initialTime = System.currentTimeMillis();
+    final Object watchLock = new Object();
+    final Watcher watcher = new Watcher() {
+      @Override
+      public void process(WatchedEvent event) {
+        synchronized (watchLock) {
+          watchLock.notify();
         }
-        count++;
       }
-      // new node is in the top children, assign a new id.
-      if (count < _maxInstances) {
-        return assignNode(newNode);
+    };
+    String newPath = null;
+    try {
+      newPath = _zooKeeper.create(_idPath + "/id_", null, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
+    } catch (KeeperException | InterruptedException e) {
+      throw new IOException(e);
+    }
+    String lock = null;
+    try {
+      int count = -1;
+      while (count == -1 || count >= _maxInstances) {
+        lock = lock();
+        List<String> children = _zooKeeper.getChildren(_idPath, watcher);
+        int[] childNumbers = new int[children.size()];
+        int childCounter = 0;
+        for (String child : children) {
+          childNumbers[childCounter++] = Integer.parseInt(child.substring(child.lastIndexOf('_') + 1));
+        }
+        int myNumber = Integer.parseInt(newPath.substring(newPath.lastIndexOf('_') + 1));
+        String newNode = newPath.substring(newPath.lastIndexOf('/') + 1);
+        for (int childNumber : childNumbers) {
+          if (myNumber == childNumber) {
+            break;
+          }
+          count++;
+        }
+        // new node is in the top children, assign a new id.
+        if (count < _maxInstances) {
+          return assignNode(newNode);
+        } else {
+          if (System.currentTimeMillis() - initialTime >= millisToWait) {
+            _zooKeeper.delete(newPath, -1);
+            return -1;
+          }
+          unlock(lock);
+          lock = null;
+          synchronized (watchLock) {
+            watchLock.wait(_waitForIdQueueTimeout);
+          }
+        }
       }
-      _zooKeeper.delete(newPath, -1);
-      return -1;
     } catch (KeeperException | InterruptedException e) {
       throw new IOException(e);
     } finally {
-      unlock(lock);
+      if (lock != null) {
+        unlock(lock);
+      }
     }
+    return -1;
   }
 
   @Override
   public void releaseId(int id) throws IOException {
     final String lock = lock();
+    if (_sessionChecker != null) {
+      _sessionChecker.interrupt();
+    }
     try {
       try {
         List<String> children = _zooKeeper.getChildren(_idPath, false);
@@ -262,8 +219,39 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
       _zooKeeper.delete(_idPath + "/" + newNode, -1);
       return -1;
     }
-    _zooKeeper.setData(_idPath + "/" + newNode, Integer.toString(nextClearBit).getBytes(), newNodeStat.getVersion());
+    _assignedNode = _idPath + "/" + newNode;
+    _initialStat = _zooKeeper.setData(_assignedNode, Integer.toString(nextClearBit).getBytes(),
+        newNodeStat.getVersion());
+    startSessionCheckerThread();
     return nextClearBit;
+  }
+
+  private void startSessionCheckerThread() {
+    _sessionChecker = new Thread() {
+      @Override
+      public void run() {
+        while (true) {
+          if (Thread.interrupted()) {
+            return;
+          }
+          try {
+            Thread.sleep(_checkThreadPeriod);
+          } catch (InterruptedException e) {
+            return;
+          }
+          try {
+            Stat currentStat = _zooKeeper.exists(_assignedNode, false);
+            if (!currentStat.equals(_initialStat)) {
+              _sessionValid.set(false);
+            }
+          } catch (Exception e) {
+            _sessionValid.set(false);
+          }
+        }
+      }
+    };
+    _sessionChecker.setDaemon(true);
+    _sessionChecker.start();
   }
 
   private void unlock(String lock) throws IOException {
@@ -304,5 +292,16 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
     } catch (KeeperException | InterruptedException e) {
       throw new IOException(e);
     }
+  }
+
+  @Override
+  public boolean sessionValid() {
+    long now = System.currentTimeMillis();
+    if (now - _lastSessionCacheUpdate > _sessionValidityCacheTTL) {
+      _lastSessionCacheUpdate = now;
+      _sessionValidCache = _sessionValid.get();
+    }
+    
+    return _sessionValidCache;
   }
 }
