@@ -119,6 +119,7 @@ public class TestInstanceIdManagerZooKeeper {
     }
 
     zooKeeper.close();
+    cluster.shutdownZooKeeper();
   }
 
   private static void rmr(ZooKeeper zooKeeper, String path) throws KeeperException, InterruptedException {
