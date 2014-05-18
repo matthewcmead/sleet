@@ -11,6 +11,7 @@ import sleet.generators.IdGenerator;
 import sleet.id.TimeId;
 import sleet.id.TimeIdType;
 import sleet.state.IdState;
+import sleet.utils.time.TimeCalculationException;
 import sleet.utils.time.TimeCalculator;
 
 /**
@@ -144,4 +145,16 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
     }
   }
 
+  public void sleepUntilNextTimeValue() throws TimeCalculationException {
+    long currValue = this.timeCalc.timeValue();
+    long lastValue = currValue;
+    while (currValue <= lastValue) {
+      try {
+        Thread.sleep(Math.max(this.timeCalc.getGranularity(), this.timeCalc.getGranularity() * Math.abs(lastValue - currValue)));
+      } catch (InterruptedException e) {
+        // ignore
+      }
+      currValue = this.timeCalc.timeValue();
+    }
+  }
 }

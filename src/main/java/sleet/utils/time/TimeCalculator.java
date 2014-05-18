@@ -88,7 +88,7 @@ public class TimeCalculator {
     }
     return timevalue;
   }
-  
+
   public long millisSinceJavaEpochUTC(long timeValue) throws TimeCalculationException {
     if (timeValue > this.maxTimeValue) {
       throw new TimeCalculationException("Time value provided overflowed the number of time bits specified (" + this.bitsInTimeValue + ").");
@@ -96,7 +96,7 @@ public class TimeCalculator {
     if (timeValue < 0) {
       throw new TimeCalculationException("Time value provided overflowed the maximum of 63 bits allowed by this implementation.");
     }
-    
+
     return this.epoch + (timeValue * this.granularity);
   }
 
@@ -126,4 +126,21 @@ public class TimeCalculator {
     }
     System.out.println("Calculated " + countinms + " timevalues in the last " + tc.granularity + "ms.");
   }
+
+  public long getEpoch() {
+    return epoch;
+  }
+
+  public long getGranularity() {
+    return granularity;
+  }
+
+  public int getBitsInTimeValue() {
+    return bitsInTimeValue;
+  }
+
+  public long getMaxTimeValue() {
+    return maxTimeValue;
+  }
+
 }
