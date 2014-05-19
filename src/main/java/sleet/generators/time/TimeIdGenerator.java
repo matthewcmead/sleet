@@ -25,7 +25,7 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
   public static final String EPOCH_KEY = "time.epoch.in.java.system.time.millis";
   public static final String GRANULARITY_IN_MS_KEY = "time.granularity.milliseconds";
   public static final String BITS_IN_TIME_VALUE_KEY = "time.bits.in.time.value";
-  public static final String MAX_WAIT_AFTER_BACKWARD_CLOCK_SKEW_KEY = "time.max.wait.ms.after.backward.clock.skew";
+  public static final String MAX_WAIT_AFTER_BACKWARD_CLOCK_SKEW_KEY = "time.max.wait.milliseconds.after.backward.clock.skew";
 
   private TimeCalculator timeCalc;
   private long maxWaitAfterBackwardClockSkew = -1;
@@ -145,9 +145,8 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
     }
   }
 
-  public void sleepUntilNextTimeValue() throws TimeCalculationException {
+  public void sleepUntilNextTimeValue(long lastValue) throws TimeCalculationException {
     long currValue = this.timeCalc.timeValue();
-    long lastValue = currValue;
     while (currValue <= lastValue) {
       try {
         Thread.sleep(Math.max(this.timeCalc.getGranularity(), this.timeCalc.getGranularity() * Math.abs(lastValue - currValue)));
