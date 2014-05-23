@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
+import sleet.generators.GeneratorConfigException;
 import sleet.generators.GeneratorSessionException;
 import sleet.generators.IdGenerator;
 import sleet.generators.fixed.FixedLongIdGenerator;
@@ -18,6 +19,8 @@ public class SleetIdGenerator implements IdGenerator<LongIdType> {
   public static final String WAIT_ON_SEQUENCE_OVERRUN_KEY = "sleet.wait.on.sequence.overrun";
 
   private final List<IdGenerator<? extends IdType<?,?>>> subgens = new ArrayList<IdGenerator<? extends IdType<?, ?>>>(4);
+  
+  private boolean waitOnSeqOverrun;
   
   public SleetIdGenerator() {
   }
@@ -42,6 +45,12 @@ public class SleetIdGenerator implements IdGenerator<LongIdType> {
     TimeDependentSequenceIdGenerator seqGen = new TimeDependentSequenceIdGenerator();
     seqGen.beginIdSession(config);
     this.subgens.add(seqGen);
+    
+    String waitOnSeqOverrunStr = config.getProperty(WAIT_ON_SEQUENCE_OVERRUN_KEY);
+    if (waitOnSeqOverrunStr == null) {
+      throw new GeneratorConfigException("Missing flag for whether to wait on sequence overrun during id generation, must be specified in configuration properties key \"" + WAIT_ON_SEQUENCE_OVERRUN_KEY + "\".");
+    }
+    this.waitOnSeqOverrun = Boolean.parseBoolean(waitOnSeqOverrunStr);
   }
 
   @Override
