@@ -15,6 +15,7 @@ import sleet.state.IdState;
 public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType> {
   public static final String BITS_IN_SEQUENCE_KEY = "sequence.bits.in.sequence.value";
 
+  private int bits = -1;
   private long maxSequenceValue = -1;
   private long lastTimeValue = -1;
 
@@ -30,12 +31,14 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
     if (bitsStr == null) {
       throw new GeneratorConfigException("Missing number of bits for the sequence value, must be specified in configuration properties key \"" + BITS_IN_SEQUENCE_KEY + "\".");
     }
-    long bits = -1;
+    int bits = -1;
     try {
-      bits = Long.valueOf(bitsStr);
+      bits = Integer.valueOf(bitsStr);
     } catch (NumberFormatException e) {
       throw new GeneratorConfigException("Failed to parse number of bits from value \"" + bitsStr + "\".  The value for configuration properties key \"" + BITS_IN_SEQUENCE_KEY + "\" must be a long.");
     }
+
+    this.bits = bits;
 
     this.maxSequenceValue = (1L << bits) - 1L;
   }
@@ -56,7 +59,7 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
     validateSessionStarted();
     TimeIdType timeIdType = null;
     for (IdState<?, ?> state : states) {
-      if (TimeIdType.class.isAssignableFrom(state.getGeneratorClass())) {
+      if (state.getId() instanceof TimeIdType) {
         if (timeIdType == null) {
           timeIdType = (TimeIdType) state.getId();
         } else {
@@ -73,11 +76,11 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
     synchronized (lock) {
       if (currentTimeValue < this.lastTimeValue) {
         return new LongId(-1, new TimeIdReverseSkewError(this.getClass().getName()
-            + " depends on the preceeding id generator which generated the TimeIdType to guard against the TimeIdType values decreasing over time"));
+            + " depends on the preceeding id generator which generated the TimeIdType to guard against the TimeIdType values decreasing over time"), this.bits);
       } else if (currentTimeValue == this.lastTimeValue) {
         if (this.sequenceValue > this.maxSequenceValue || this.sequenceValue < 0) {
           return new LongId(-1, new SequenceIdOverflowError(this.getClass().getName() + " overflowed the maximum sequence value when allocating a sequence id for time value \"" + currentTimeValue
-              + "\"."));
+              + "\"."), this.bits);
         } else {
           returnValue = this.sequenceValue;
           this.sequenceValue++;
@@ -88,7 +91,8 @@ public class TimeDependentSequenceIdGenerator implements IdGenerator<LongIdType>
         this.sequenceValue++;
       }
     }
-    return new LongId(returnValue, null);
+    this.lastTimeValue = currentTimeValue;
+    return new LongId(returnValue, null, this.bits);
   }
 
   private void validateSessionStarted() throws GeneratorSessionException {

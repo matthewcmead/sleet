@@ -1,12 +1,14 @@
 package sleet.id;
 
 public class LongId implements LongIdType {
-  final long value;
-  final IdError error;
-  
-  public LongId(long value, IdError error) {
+  private final long value;
+  private final int numBits;
+  private final IdError error;
+
+  public LongId(long value, IdError error, int numBits) {
     this.value = value;
     this.error = error;
+    this.numBits = numBits;
   }
 
   @Override
@@ -17,6 +19,11 @@ public class LongId implements LongIdType {
   @Override
   public IdError getError() {
     return this.error;
+  }
+
+  @Override
+  public int getNumBitsInId() {
+    return this.numBits;
   }
 
 }

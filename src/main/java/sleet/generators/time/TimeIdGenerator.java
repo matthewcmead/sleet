@@ -124,13 +124,13 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
           deltaMs = this.timeCalc.millisSinceJavaEpochUTC(this.lastTimeValue) - this.timeCalc.millisSinceJavaEpochUTC(timeValue);
         }
         this.lastTimeValue = timeValue;
-        return new TimeId(timeValue, null);
+        return new TimeId(timeValue, null, this.timeCalc.getBitsInTimeValue());
       } else {
-        return new TimeId(timeValue, new TimeIdReverseSkewError("Time skewed backward by " + deltaMs + "ms.", deltaMs));
+        return new TimeId(timeValue, new TimeIdReverseSkewError("Time skewed backward by " + deltaMs + "ms.", deltaMs), this.timeCalc.getBitsInTimeValue());
       }
     } else {
       this.lastTimeValue = timeValue;
-      return new TimeId(timeValue, null);
+      return new TimeId(timeValue, null, this.timeCalc.getBitsInTimeValue());
     }
   }
 

@@ -1,12 +1,14 @@
 package sleet.id;
 
 public class TimeId implements TimeIdType {
-  final long value;
-  final TimeIdError error;
-  
-  public TimeId(long value, TimeIdError error) {
+  private final long value;
+  private final TimeIdError error;
+  private final int numBits;
+
+  public TimeId(long value, TimeIdError error, int numBits) {
     this.value = value;
     this.error = error;
+    this.numBits = numBits;
   }
 
   @Override
@@ -17,6 +19,11 @@ public class TimeId implements TimeIdType {
   @Override
   public TimeIdError getError() {
     return this.error;
+  }
+
+  @Override
+  public int getNumBitsInId() {
+    return this.numBits;
   }
 
 }

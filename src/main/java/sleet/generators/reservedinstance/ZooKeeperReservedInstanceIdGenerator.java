@@ -38,34 +38,30 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
   @Override
   public void beginIdSession(Properties config) throws SleetException {
     if (this.zk != null) {
-      throw new GeneratorSessionException(
-          "Session was already started.  Stop session by calling endIdSession() then start session by calling beginIdSession()");
+      throw new GeneratorSessionException("Session was already started.  Stop session by calling endIdSession() then start session by calling beginIdSession()");
     }
 
     String zkStr = config.getProperty(ZK_SERVER_KEY);
     if (zkStr == null) {
-      throw new GeneratorConfigException(
-          "Missing ZooKeeper server string, must be specified in configuration properties key \"" + ZK_SERVER_KEY
-              + "\".");
+      throw new GeneratorConfigException("Missing ZooKeeper server string, must be specified in configuration properties key \"" + ZK_SERVER_KEY + "\".");
     }
 
     String zkPathStr = config.getProperty(ZK_PATH_KEY);
     if (zkPathStr == null) {
-      throw new GeneratorConfigException(
-          "Missing ZooKeeper path string, must be specified in configuration properties key \"" + ZK_PATH_KEY + "\".");
+      throw new GeneratorConfigException("Missing ZooKeeper path string, must be specified in configuration properties key \"" + ZK_PATH_KEY + "\".");
     }
+
+    this.path = zkPathStr;
 
     String zkTimeoutStr = config.getProperty(ZK_TIMEOUT_KEY);
     if (zkTimeoutStr == null) {
-      throw new GeneratorConfigException(
-          "Missing ZooKeeper timeout, must be specified in configuration properties key \"" + ZK_TIMEOUT_KEY + "\".");
+      throw new GeneratorConfigException("Missing ZooKeeper timeout, must be specified in configuration properties key \"" + ZK_TIMEOUT_KEY + "\".");
     }
     int zkTimeout = -1;
     try {
       zkTimeout = Integer.valueOf(zkTimeoutStr);
     } catch (NumberFormatException e) {
-      throw new GeneratorConfigException("Failed to parse ZooKeeper timeout from value \"" + zkTimeoutStr
-          + "\".  The value must be an integer.");
+      throw new GeneratorConfigException("Failed to parse ZooKeeper timeout from value \"" + zkTimeoutStr + "\".  The value must be an integer.");
     }
 
     try {
@@ -81,30 +77,26 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
 
     String bitsStr = config.getProperty(BITS_IN_INSTANCE_ID_KEY);
     if (bitsStr == null) {
-      throw new GeneratorConfigException("Missing number of bits, must be specified in configuration properties key \""
-          + BITS_IN_INSTANCE_ID_KEY + "\".");
+      throw new GeneratorConfigException("Missing number of bits, must be specified in configuration properties key \"" + BITS_IN_INSTANCE_ID_KEY + "\".");
     }
     int bits = -1;
     try {
       bits = Integer.valueOf(bitsStr);
     } catch (NumberFormatException e) {
-      throw new GeneratorConfigException("Failed to parse number of bits from value \"" + bitsStr
-          + "\".  The value must be an integer.");
+      throw new GeneratorConfigException("Failed to parse number of bits from value \"" + bitsStr + "\".  The value must be an integer.");
     }
     this.bitsInInstanceValue = bits;
     this.maxInstanceValue = (1 << this.bitsInInstanceValue) - 1;
-    
+
     String msTimeoutStr = config.getProperty(MILLISECONDS_TO_WAIT_FOR_ID);
     if (msTimeoutStr == null) {
-      throw new GeneratorConfigException("Missing number of milliseconds to wait on startup, must be specified in configuration properties key \""
-          + MILLISECONDS_TO_WAIT_FOR_ID + "\".");
+      throw new GeneratorConfigException("Missing number of milliseconds to wait on startup, must be specified in configuration properties key \"" + MILLISECONDS_TO_WAIT_FOR_ID + "\".");
     }
     int msTimeout = -1;
     try {
       msTimeout = Integer.valueOf(msTimeoutStr);
     } catch (NumberFormatException e) {
-      throw new GeneratorConfigException("Failed to parse number of milliseconds to wait on startup from value \"" + msTimeoutStr
-          + "\".  The value must be an integer.");
+      throw new GeneratorConfigException("Failed to parse number of milliseconds to wait on startup from value \"" + msTimeoutStr + "\".  The value must be an integer.");
     }
 
     try {
@@ -113,7 +105,7 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
       if (underlyingid == -1) {
         throw new ReservedInstanceTimeoutException("Unable to allocate an id instance within the timeout allotted (" + msTimeout + ")");
       } else {
-        this.id = new LongId(underlyingid, null);
+        this.id = new LongId(underlyingid, null, this.bitsInInstanceValue);
       }
     } catch (IOException e) {
       throw new SleetException(e);

@@ -13,7 +13,8 @@ import sleet.state.IdState;
 
 public class FixedLongIdGenerator implements IdGenerator<LongIdType> {
   public static final String FIXED_LONG_VALUE_KEY = "fixed.long.value";
-  
+  public static final String FIXED_BITS_IN_ID_KEY = "fixed.bits.in.value";
+
   private LongId value = null;
 
   @Override
@@ -31,7 +32,23 @@ public class FixedLongIdGenerator implements IdGenerator<LongIdType> {
     } catch (NumberFormatException e) {
       throw new GeneratorConfigException("Failed to parse long value from value \"" + valueStr + "\".  The value for configuration properties key \"" + FIXED_LONG_VALUE_KEY + "\" must be a long.");
     }
-    this.value = new LongId(value, null);
+
+    String bitsStr = config.getProperty(FIXED_BITS_IN_ID_KEY);
+    if (bitsStr == null) {
+      throw new GeneratorConfigException("Missing number of bits for the fixed value, must be specified in configuration properties key \"" + FIXED_BITS_IN_ID_KEY + "\".");
+    }
+    int bits = -1;
+    try {
+      bits = Integer.valueOf(bitsStr);
+    } catch (NumberFormatException e) {
+      throw new GeneratorConfigException("Failed to parse number of bits from value \"" + bitsStr + "\".  The value for configuration properties key \"" + FIXED_BITS_IN_ID_KEY + "\" must be a long.");
+    }
+
+    if ((1L << bits) - 1L < value) {
+      throw new GeneratorConfigException("Specified value of " + value + " exceeds the capacity of the number of bits specified (" + bits + ").");
+    }
+
+    this.value = new LongId(value, null, bits);
   }
 
   @Override
