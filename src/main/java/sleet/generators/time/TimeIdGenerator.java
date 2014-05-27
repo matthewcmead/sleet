@@ -3,6 +3,7 @@ package sleet.generators.time;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 
 import sleet.SleetException;
 import sleet.generators.GeneratorConfigException;
@@ -146,14 +147,6 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
   }
 
   public void sleepUntilNextTimeValue(long lastValue) throws TimeCalculationException {
-    long currValue = this.timeCalc.timeValue();
-    while (currValue <= lastValue) {
-      try {
-        Thread.sleep(Math.max(this.timeCalc.getGranularity(), this.timeCalc.getGranularity() * Math.abs(lastValue - currValue)));
-      } catch (InterruptedException e) {
-        // ignore
-      }
-      currValue = this.timeCalc.timeValue();
-    }
+    LockSupport.parkUntil(this.timeCalc.millisSinceJavaEpochUTC(lastValue + 1));
   }
 }

@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.InputStream;
 import java.util.Properties;
 
+import sleet.generators.time.TimeDependentSequenceIdGenerator;
 import sleet.utils.curator.ZkMiniCluster;
 
 public class TestSleetIdGenerator {
@@ -28,7 +29,7 @@ public class TestSleetIdGenerator {
       gen.beginIdSession(props);
       int loops = 1000000;
       long start = System.currentTimeMillis();
-      long maxseq = 255;
+      long maxseq = (1L << Integer.parseInt(props.getProperty(TimeDependentSequenceIdGenerator.BITS_IN_SEQUENCE_KEY))) - 1L;
       long highest = -1;
       for (int i = 0; i < loops; i++) {
         // System.out.println(SleetIdGenerator.paddedBinary(gen.getId().getId()));
