@@ -38,7 +38,6 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
   private static final long _waitForIdQueueTimeout = 1000L;
   private static final long _checkThreadPeriod = 10000L;
 
-
   private final int _maxInstances;
   private final ZooKeeper _zooKeeper;
   private final String _idPath;
@@ -64,7 +63,9 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
       if (stat == null) {
         _zooKeeper.create(path, null, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
       }
-    } catch (KeeperException | InterruptedException e) {
+    } catch (KeeperException e) {
+      throw new IOException(e);
+    } catch (InterruptedException e) {
       throw new IOException(e);
     }
     return path;
@@ -90,7 +91,9 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
     String newPath = null;
     try {
       newPath = _zooKeeper.create(_idPath + "/id_", null, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
-    } catch (KeeperException | InterruptedException e) {
+    } catch (KeeperException e) {
+      throw new IOException(e);
+    } catch (InterruptedException e) {
       throw new IOException(e);
     }
     String lock = null;
@@ -127,7 +130,9 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
           }
         }
       }
-    } catch (KeeperException | InterruptedException e) {
+    } catch (KeeperException e) {
+      throw new IOException(e);
+    } catch (InterruptedException e) {
       throw new IOException(e);
     } finally {
       if (lock != null) {
@@ -164,7 +169,9 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
             return;
           }
         }
-      } catch (KeeperException | InterruptedException e) {
+      } catch (KeeperException e) {
+        throw new IOException(e);
+      } catch (InterruptedException e) {
         throw new IOException(e);
       }
     } finally {
@@ -173,7 +180,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
   }
 
   private int assignNode(String newNode) throws KeeperException, InterruptedException, IOException {
-    List<String> children = new ArrayList<>(_zooKeeper.getChildren(_idPath, false));
+    List<String> children = new ArrayList<String>(_zooKeeper.getChildren(_idPath, false));
     int count = 0;
     int newNodeIndex = -1;
     Stat newNodeStat = null;
@@ -210,8 +217,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
       return -1;
     }
     _assignedNode = _idPath + "/" + newNode;
-    _initialStat = _zooKeeper.setData(_assignedNode, Integer.toString(nextClearBit).getBytes(),
-        newNodeStat.getVersion());
+    _initialStat = _zooKeeper.setData(_assignedNode, Integer.toString(nextClearBit).getBytes(), newNodeStat.getVersion());
     startSessionCheckerThread();
     return nextClearBit;
   }
@@ -249,7 +255,9 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
   private void unlock(String lock) throws IOException {
     try {
       _zooKeeper.delete(_lockPath + "/" + lock, -1);
-    } catch (InterruptedException | KeeperException e) {
+    } catch (InterruptedException e) {
+      throw new IOException(e);
+    } catch (KeeperException e) {
       throw new IOException(e);
     }
   }
@@ -268,7 +276,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
         }
       };
       while (true) {
-        List<String> children = new ArrayList<>(_zooKeeper.getChildren(_lockPath, watcher));
+        List<String> children = new ArrayList<String>(_zooKeeper.getChildren(_lockPath, watcher));
         Collections.sort(children);
         if (children.size() < 1) {
           throw new IOException("Children of path [" + _lockPath + "] should never be 0.");
@@ -281,7 +289,9 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
           lock.wait(TimeUnit.SECONDS.toMillis(1));
         }
       }
-    } catch (KeeperException | InterruptedException e) {
+    } catch (KeeperException e) {
+      throw new IOException(e);
+    } catch (InterruptedException e) {
       throw new IOException(e);
     }
   }
@@ -293,7 +303,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
       _lastSessionCacheUpdate = now;
       _sessionValidCache = _sessionValid.get();
     }
-    
+
     return _sessionValidCache;
   }
 }

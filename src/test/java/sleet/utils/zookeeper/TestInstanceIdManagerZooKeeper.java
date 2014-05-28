@@ -74,7 +74,7 @@ public class TestInstanceIdManagerZooKeeper {
       Random random = new Random();
       final AtomicInteger count = new AtomicInteger();
       int maxWorkers = 100;
-      List<Future<Void>> futures = new ArrayList<>();
+      List<Future<Void>> futures = new ArrayList<Future<Void>>();
       for (int i = 0; i < maxWorkers; i++) {
         final int secondToWork = random.nextInt(2) + 1;
         final int index = i;
