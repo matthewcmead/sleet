@@ -114,15 +114,19 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
 
   @Override
   public void checkSessionValidity() throws SleetException {
+    checkSessionValidity(true);
+  }
+
+  public void checkSessionValidity(boolean allowValidityStateCaching) throws SleetException {
     validateSessionStarted();
-    if (!this.instMgr.sessionValid()) {
+    if (!this.instMgr.sessionValid(allowValidityStateCaching)) {
       throw new GeneratorSessionException("Underlying " + this.instMgr.getClass().getName() + " implementation lost session validity.");
     }
   }
 
   @Override
   public void endIdSession() throws SleetException {
-    validateSessionStarted();
+    checkSessionValidity(false);
     try {
       this.instMgr.releaseId(this.id.getId().intValue());
     } catch (IOException e) {
@@ -143,7 +147,7 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
 
   @Override
   public LongIdType getId(List<IdState<?, ?>> states) throws SleetException {
-    validateSessionStarted();
+    checkSessionValidity(true);
     return this.id;
   }
 
