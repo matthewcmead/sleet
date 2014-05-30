@@ -6,10 +6,6 @@ public class IdOverflowException extends GeneratorException {
    */
   private static final long serialVersionUID = 6754925706659214152L;
 
-  public IdOverflowException(String message, Throwable cause, boolean enableSuppression, boolean writableStackTrace) {
-    super(message, cause, enableSuppression, writableStackTrace);
-  }
-
   public IdOverflowException(String message, Throwable cause) {
     super(message, cause);
   }

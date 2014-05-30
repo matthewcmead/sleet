@@ -9,10 +9,6 @@ public class TimeCalculationException extends SleetException {
    */
   private static final long serialVersionUID = 6146122763393934673L;
 
-  public TimeCalculationException(String message, Throwable cause, boolean enableSuppression, boolean writableStackTrace) {
-    super(message, cause, enableSuppression, writableStackTrace);
-  }
-
   public TimeCalculationException(String message, Throwable cause) {
     super(message, cause);
   }

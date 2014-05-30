@@ -10,10 +10,6 @@ public class InstanceIdSpaceFullException extends Exception {
     super();
   }
 
-  public InstanceIdSpaceFullException(String message, Throwable cause, boolean enableSuppression, boolean writableStackTrace) {
-    super(message, cause, enableSuppression, writableStackTrace);
-  }
-
   public InstanceIdSpaceFullException(String message, Throwable cause) {
     super(message, cause);
   }

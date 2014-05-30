@@ -18,9 +18,11 @@ package sleet.utils.zookeeper;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.BitSet;
-import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -48,6 +50,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
   private Stat _initialStat = null;
   private Thread _sessionChecker = null;
   private long _lastSessionCacheUpdate = -1;
+  private AtomicBoolean _running = new AtomicBoolean(true);
 
   public InstanceIdManagerZooKeeper(ZooKeeper zooKeeper, String path, int maxInstances) throws IOException {
     _maxInstances = maxInstances;
@@ -107,6 +110,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
         for (String child : children) {
           childNumbers[childCounter++] = Integer.parseInt(child.substring(child.lastIndexOf('_') + 1));
         }
+        Arrays.sort(childNumbers);
         int myNumber = Integer.parseInt(newPath.substring(newPath.lastIndexOf('_') + 1));
         String newNode = newPath.substring(newPath.lastIndexOf('/') + 1);
         for (int childNumber : childNumbers) {
@@ -145,6 +149,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
   @Override
   public void releaseId(int id) throws IOException {
     final String lock = lock();
+    _running.set(false);
     if (_sessionChecker != null) {
       _sessionChecker.interrupt();
     }
@@ -181,22 +186,26 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
 
   private int assignNode(String newNode) throws KeeperException, InterruptedException, IOException {
     List<String> children = new ArrayList<String>(_zooKeeper.getChildren(_idPath, false));
+    TreeMap<Integer, String> sortedChildren = new TreeMap<Integer, String>();
+    for (String child : children) {
+      sortedChildren.put(Integer.parseInt(child.substring(child.lastIndexOf('_') + 1)), child);
+    }
     int count = 0;
     int newNodeIndex = -1;
     Stat newNodeStat = null;
     BitSet bitSet = new BitSet(_maxInstances);
-    for (String s : children) {
+    for (Map.Entry<Integer, String> entry : sortedChildren.entrySet()) {
       if (count >= _maxInstances) {
         break;
       }
 
-      String path = _idPath + "/" + s;
+      String path = _idPath + "/" + entry.getValue();
       Stat stat = _zooKeeper.exists(path, false);
       if (stat == null) {
         // This should never happen because the lock prevents it.
         throw new IOException("This should never happen because the lock prevents it.");
       }
-      if (s.equals(newNode)) {
+      if (entry.getValue().equals(newNode)) {
         newNodeIndex = count;
         newNodeStat = stat;
       }
@@ -218,6 +227,28 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
     }
     _assignedNode = _idPath + "/" + newNode;
     _initialStat = _zooKeeper.setData(_assignedNode, Integer.toString(nextClearBit).getBytes(), newNodeStat.getVersion());
+    /**
+     * Sanity check to ensure there is only one node with our id
+     */
+    children = new ArrayList<String>(_zooKeeper.getChildren(_idPath, false));
+    int idFoundCount = 0;
+    for (String s : children) {
+      String path = _idPath + "/" + s;
+      Stat stat = _zooKeeper.exists(path, false);
+      if (stat == null) {
+        // This should never happen because the lock prevents it.
+        throw new IOException("This should never happen because the lock prevents it.");
+      }
+      byte[] data = _zooKeeper.getData(path, false, stat);
+      if (data != null) {
+        if (nextClearBit == Integer.parseInt(new String(data))) {
+          idFoundCount++;
+        }
+      }
+    }
+    if (idFoundCount != 1) {
+      throw new IOException("When allocating instance number " + nextClearBit + " in path " + newNode + ", found " + idFoundCount + " instance(s) with that instance number.");
+    }
     startSessionCheckerThread();
     return nextClearBit;
   }
@@ -226,7 +257,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
     _sessionChecker = new Thread() {
       @Override
       public void run() {
-        while (true) {
+        while (_running.get()) {
           if (Thread.interrupted()) {
             return;
           }
@@ -264,8 +295,9 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
 
   private String lock() throws IOException {
     try {
-      String path = _zooKeeper.create(_lockPath + "/lock-", null, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
+      String path = _zooKeeper.create(_lockPath + "/lock_", null, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
       String lockNode = path.substring(path.lastIndexOf('/') + 1);
+      int lockNumber = Integer.parseInt(lockNode.substring(lockNode.lastIndexOf('_') + 1));
       final Object lock = new Object();
       Watcher watcher = new Watcher() {
         @Override
@@ -277,12 +309,17 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
       };
       while (true) {
         List<String> children = new ArrayList<String>(_zooKeeper.getChildren(_lockPath, watcher));
-        Collections.sort(children);
         if (children.size() < 1) {
           throw new IOException("Children of path [" + _lockPath + "] should never be 0.");
         }
-        String lockOwner = children.get(0);
-        if (lockNode.equals(lockOwner)) {
+        int[] childNumbers = new int[children.size()];
+        int childCounter = 0;
+        for (String child : children) {
+          childNumbers[childCounter++] = Integer.parseInt(child.substring(child.lastIndexOf('_') + 1));
+        }
+        Arrays.sort(childNumbers);
+        int lockOwnerNumber = childNumbers[0];
+        if (lockNumber == lockOwnerNumber) {
           return lockNode;
         }
         synchronized (lock) {
