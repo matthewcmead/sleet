@@ -336,11 +336,26 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
   @Override
   public boolean sessionValid(boolean allowValidityStateCaching) {
     long now = System.currentTimeMillis();
-    if (!allowValidityStateCaching || (now - _lastSessionCacheUpdate > _sessionValidityCacheTTL)) {
+    if (allowValidityStateCaching) {
+      if (now - _lastSessionCacheUpdate > _sessionValidityCacheTTL) {
+        _lastSessionCacheUpdate = now;
+        _sessionValidCache = _sessionValid.get();
+      }
+    } else {
+      /**
+       * When we aren't allow to cache state, go check zookeeper ourselves
+       */
+      try {
+        Stat currentStat = _zooKeeper.exists(_assignedNode, false);
+        if (!_initialStat.equals(currentStat)) {
+          _sessionValid.set(false);
+        }
+      } catch (Exception e) {
+        _sessionValid.set(false);
+      }
       _lastSessionCacheUpdate = now;
       _sessionValidCache = _sessionValid.get();
     }
-
     return _sessionValidCache;
   }
 }
