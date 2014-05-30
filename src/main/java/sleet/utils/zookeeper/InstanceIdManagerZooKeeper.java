@@ -123,7 +123,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
         if (count < _maxInstances) {
           return assignNode(newNode);
         } else {
-          if (System.currentTimeMillis() - initialTime >= millisToWait) {
+          if (millisToWait != -1 && (System.currentTimeMillis() - initialTime >= millisToWait)) {
             _zooKeeper.delete(newPath, -1);
             return -1;
           }
