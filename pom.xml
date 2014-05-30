@@ -11,40 +11,48 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
 
-    <curator.version>2.4.1</curator.version>
+    <zookeeper.version>3.4.5</zookeeper.version>
+    <guava.version>14.0.1</guava.version>
+    <log4j.version>1.2.16</log4j.version>
   </properties>
 
   <dependencyManagement>
     <dependencies>
     <dependency>
-      <groupId>org.apache.curator</groupId>
-      <artifactId>curator-client</artifactId>
-      <version>${curator.version}</version>
+      <groupId>log4j</groupId>
+      <artifactId>log4j</artifactId>
+      <version>${log4j.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.curator</groupId>
-      <artifactId>curator-framework</artifactId>
-      <version>${curator.version}</version>
+    	<groupId>org.apache.zookeeper</groupId>
+    	<artifactId>zookeeper</artifactId>
+    	<version>${zookeeper.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.curator</groupId>
-      <artifactId>curator-recipes</artifactId>
-      <version>${curator.version}</version>
+    	<groupId>com.google.guava</groupId>
+    	<artifactId>guava</artifactId>
+    	<version>${guava.version}</version>
     </dependency>
     </dependencies>
   </dependencyManagement>
   <dependencies>
     <dependency>
-      <groupId>org.apache.curator</groupId>
-      <artifactId>curator-client</artifactId>
+      <groupId>log4j</groupId>
+      <artifactId>log4j</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.apache.curator</groupId>
-      <artifactId>curator-framework</artifactId>
+    	<groupId>org.apache.zookeeper</groupId>
+    	<artifactId>zookeeper</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>log4j</groupId>
+          <artifactId>log4j</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.curator</groupId>
-      <artifactId>curator-recipes</artifactId>
+    	<groupId>com.google.guava</groupId>
+    	<artifactId>guava</artifactId>
     </dependency>
   </dependencies>
   <build>

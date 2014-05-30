@@ -1,4 +1,4 @@
-package sleet.utils.curator;
+package sleet.utils.zookeeper;
 
 /**
  * Licensed to the Apache Software Foundation (ASF) under one or more

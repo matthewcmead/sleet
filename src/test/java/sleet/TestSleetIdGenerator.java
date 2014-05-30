@@ -5,7 +5,7 @@ import java.io.InputStream;
 import java.util.Properties;
 
 import sleet.generators.time.TimeDependentSequenceIdGenerator;
-import sleet.utils.curator.ZkMiniCluster;
+import sleet.utils.zookeeper.ZkMiniCluster;
 
 public class TestSleetIdGenerator {
   public static void main(String[] args) {

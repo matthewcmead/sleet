@@ -18,7 +18,6 @@ import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.ZooKeeper;
 
-import sleet.utils.curator.ZkMiniCluster;
 
 public class TestInstanceIdManagerZooKeeper {
   public static void main(String[] args) throws IOException, InterruptedException, KeeperException {
