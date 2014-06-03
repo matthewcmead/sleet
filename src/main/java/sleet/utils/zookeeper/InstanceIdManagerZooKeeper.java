@@ -21,20 +21,22 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
+import org.apache.zookeeper.KeeperException.NodeExistsException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.Stat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class InstanceIdManagerZooKeeper extends InstanceIdManager {
+  private static final Logger LOG = LoggerFactory.getLogger(InstanceIdManagerZooKeeper.class);
 
   private static final long _sessionValidityCacheTTL = 1000L;
   private static final long _waitForIdQueueTimeout = 1000L;
@@ -66,6 +68,8 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
       if (stat == null) {
         _zooKeeper.create(path, null, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
       }
+    } catch (NodeExistsException e) {
+      // another instance beat us to creating
     } catch (KeeperException e) {
       throw new IOException(e);
     } catch (InterruptedException e) {
@@ -113,11 +117,12 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
         Arrays.sort(childNumbers);
         int myNumber = Integer.parseInt(newPath.substring(newPath.lastIndexOf('_') + 1));
         String newNode = newPath.substring(newPath.lastIndexOf('/') + 1);
+        count = -1;
         for (int childNumber : childNumbers) {
+          count++;
           if (myNumber == childNumber) {
             break;
           }
-          count++;
         }
         // new node is in the top children, assign a new id.
         if (count < _maxInstances) {
@@ -125,6 +130,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
         } else {
           if (millisToWait != -1 && (System.currentTimeMillis() - initialTime >= millisToWait)) {
             _zooKeeper.delete(newPath, -1);
+            LOG.info("Waited more than " + millisToWait + "ms.  Returning -1.");
             return -1;
           }
           unlock(lock);
@@ -143,6 +149,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
         unlock(lock);
       }
     }
+    LOG.info("Escaped loop to allocate an instance id.  Returning -1.");
     return -1;
   }
 
@@ -186,26 +193,18 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
 
   private int assignNode(String newNode) throws KeeperException, InterruptedException, IOException {
     List<String> children = new ArrayList<String>(_zooKeeper.getChildren(_idPath, false));
-    TreeMap<Integer, String> sortedChildren = new TreeMap<Integer, String>();
-    for (String child : children) {
-      sortedChildren.put(Integer.parseInt(child.substring(child.lastIndexOf('_') + 1)), child);
-    }
     int count = 0;
     int newNodeIndex = -1;
     Stat newNodeStat = null;
     BitSet bitSet = new BitSet(_maxInstances);
-    for (Map.Entry<Integer, String> entry : sortedChildren.entrySet()) {
-      if (count >= _maxInstances) {
-        break;
-      }
-
-      String path = _idPath + "/" + entry.getValue();
+    for (String child : children) {
+      String path = _idPath + "/" + child;
       Stat stat = _zooKeeper.exists(path, false);
       if (stat == null) {
         // This should never happen because the lock prevents it.
         throw new IOException("This should never happen because the lock prevents it.");
       }
-      if (entry.getValue().equals(newNode)) {
+      if (child.equals(newNode)) {
         newNodeIndex = count;
         newNodeStat = stat;
       }
@@ -218,11 +217,13 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
     if (newNodeIndex == -1) {
       // Someone else grabbed the lock before us.
       _zooKeeper.delete(_idPath + "/" + newNode, -1);
+      LOG.info("Could not find our node within the list of children.  Returning -1.");
       return -1;
     }
     int nextClearBit = bitSet.nextClearBit(0);
     if (nextClearBit < 0 || nextClearBit >= _maxInstances) {
       _zooKeeper.delete(_idPath + "/" + newNode, -1);
+      LOG.info("nextClearBit was " + nextClearBit + ", expected it to be >= 0 and < " + _maxInstances + ".  Returning -1.");
       return -1;
     }
     _assignedNode = _idPath + "/" + newNode;
