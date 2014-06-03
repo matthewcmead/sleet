@@ -24,6 +24,9 @@ import java.util.concurrent.TimeUnit;
 import sleet.generators.time.TimeDependentSequenceIdGenerator;
 import sleet.utils.zookeeper.ZkMiniCluster;
 
+/**
+ * TODO MCM convert to a unit test
+ */
 public class TestSleetIdGenerator {
   public static final int NUM_INSTANCES = 100;
 
