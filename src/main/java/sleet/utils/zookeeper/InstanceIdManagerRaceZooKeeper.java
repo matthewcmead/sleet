@@ -137,11 +137,12 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
 
     try {
       final long initialTime = System.currentTimeMillis();
+      final long endTime = millisToWait == -1 ? Long.MAX_VALUE : initialTime + millisToWait;
 
       boolean locked = false;
       Stat mustLockStat = null;
 
-      while (millisToWait == -1 || (initialTime + millisToWait > System.currentTimeMillis())) {
+      while (endTime > System.currentTimeMillis()) {
         /**
          * Examine the mustLock path and see if someone has decided for us that
          * we must lock
@@ -181,7 +182,7 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
                 deleteIfExists(_mustLockPath, -1);
               }
 
-              int obtainedId = tryToRace(locked, initialTime + millisToWait);
+              int obtainedId = tryToRace(locked, endTime);
               if (obtainedId != -1) {
                 _id = obtainedId;
                 /**
@@ -202,7 +203,7 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
             /**
              * We got the lock
              */
-            int obtainedId = tryToRace(locked, initialTime + millisToWait);
+            int obtainedId = tryToRace(locked, endTime);
             if (obtainedId != -1) {
               _id = obtainedId;
               /**
@@ -220,7 +221,7 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
           /**
            * Noone has said we can't race
            */
-          int obtainedId = tryToRace(locked, initialTime + millisToWait);
+          int obtainedId = tryToRace(locked, endTime);
           if (obtainedId != -1) {
             _id = obtainedId;
             /**
@@ -243,7 +244,7 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
   private void temporaryBlockOnLock() throws IOException {
     if (_lockNodePath == null) {
       try {
-        Thread.sleep(TimeUnit.SECONDS.toMicros(1));
+        Thread.sleep(TimeUnit.SECONDS.toMillis(1));
       } catch (InterruptedException e) {
         throw new IOException(e);
       }
