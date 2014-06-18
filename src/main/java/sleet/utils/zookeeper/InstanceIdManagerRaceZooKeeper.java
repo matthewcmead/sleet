@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
+import org.apache.zookeeper.KeeperException.Code;
 import org.apache.zookeeper.KeeperException.NodeExistsException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
@@ -115,19 +116,21 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
     return _maxInstances;
   }
 
-  private Stat existsIfAvailable(String path) throws InterruptedException {
+  private Stat existsIfAvailable(String path) throws InterruptedException, IOException {
     try {
       return _zooKeeper.exists(path, false);
     } catch (KeeperException e) {
-      return null;
+      throw new IOException(e);
     }
   }
 
-  private void deleteIfExists(String path, int version) throws InterruptedException {
+  private void deleteIfExists(String path, int version) throws InterruptedException, IOException {
     try {
       _zooKeeper.delete(path, version);
     } catch (KeeperException e) {
-      // ignore
+      if (e.code() != Code.NONODE) {
+        throw new IOException(e);
+      }
     }
   }
 
