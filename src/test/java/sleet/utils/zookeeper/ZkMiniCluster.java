@@ -60,6 +60,7 @@ public class ZkMiniCluster {
     properties.setProperty("tickTime", "2000");
     properties.setProperty("initLimit", "10");
     properties.setProperty("syncLimit", "5");
+    properties.setProperty("maxClientCnxns", "150");
 
     properties.setProperty("clientPort", "21810");
 

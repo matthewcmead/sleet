@@ -21,6 +21,11 @@ import java.io.InputStream;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.log4j.ConsoleAppender;
+import org.apache.log4j.Level;
+import org.apache.log4j.Logger;
+import org.apache.log4j.PatternLayout;
+
 import sleet.generators.time.TimeDependentSequenceIdGenerator;
 import sleet.utils.zookeeper.ZkMiniCluster;
 
@@ -30,7 +35,27 @@ import sleet.utils.zookeeper.ZkMiniCluster;
 public class TestSleetIdGenerator {
   public static final int NUM_INSTANCES = 100;
 
+  private static void setupLog4j() {
+    ConsoleAppender console = new ConsoleAppender(); //create appender
+    //configure the appender
+    String PATTERN = "%d [%p|%c|%C{1}] %m%n";
+    console.setLayout(new PatternLayout(PATTERN)); 
+    console.setThreshold(Level.FATAL);
+    console.activateOptions();
+    //add appender to any Logger (here is root)
+    Logger.getRootLogger().addAppender(console);
+    console = new ConsoleAppender(); //create appender
+    //configure the appender
+    console.setLayout(new PatternLayout(PATTERN)); 
+    console.setThreshold(Level.INFO);
+    console.activateOptions();
+    //add appender to any Logger (here is root)
+    Logger.getLogger("sleet").addAppender(console);
+  }
+  
+  
   public static void main(String[] args) {
+    setupLog4j();
     ZkMiniCluster cluster = null;
     try {
       cluster = new ZkMiniCluster();
@@ -43,7 +68,7 @@ public class TestSleetIdGenerator {
       zkconn = "localhost:" + zkconn.substring(zkconn.lastIndexOf(':') + 1);
       System.out.println("ZK connection string: " + zkconn);
 
-      Thread.sleep(TimeUnit.SECONDS.toMillis(1));
+      Thread.sleep(TimeUnit.SECONDS.toMillis(2));
       Thread[] threads = new Thread[NUM_INSTANCES];
       final Object lock = new Object();
       for (int instance = 0; instance < NUM_INSTANCES; instance++) {
@@ -58,7 +83,7 @@ public class TestSleetIdGenerator {
               props.load(is);
               is.close();
               gen.beginIdSession(props);
-              int loops = 100000;
+              int loops = 1000000;
               long start = System.currentTimeMillis();
               long maxseq = (1L << Integer.parseInt(props.getProperty(TimeDependentSequenceIdGenerator.BITS_IN_SEQUENCE_KEY))) - 1L;
               long highest = -1;

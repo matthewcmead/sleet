@@ -31,7 +31,8 @@ import sleet.generators.IdGenerator;
 import sleet.id.LongId;
 import sleet.id.LongIdType;
 import sleet.state.IdState;
-import sleet.utils.zookeeper.InstanceIdManagerZooKeeper;
+import sleet.utils.zookeeper.InstanceIdManagerRaceZooKeeper;
+import sleet.utils.zookeeper.ZooKeeperClient;
 
 public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdType> {
 
@@ -45,7 +46,7 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
   private int maxInstanceValue = -1;
   private ZooKeeper zk = null;
   private String path = null;
-  private InstanceIdManagerZooKeeper instMgr = null;
+  private InstanceIdManagerRaceZooKeeper instMgr = null;
   private LongId id = null;
 
   public ZooKeeperReservedInstanceIdGenerator() {
@@ -81,7 +82,7 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
     }
 
     try {
-      this.zk = new ZooKeeper(zkStr, zkTimeout, new Watcher() {
+      this.zk = new ZooKeeperClient(zkStr, zkTimeout, new Watcher() {
         @Override
         public void process(WatchedEvent event) {
 
@@ -116,7 +117,7 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
     }
 
     try {
-      this.instMgr = new InstanceIdManagerZooKeeper(this.zk, this.path, this.maxInstanceValue + 1);
+      this.instMgr = new InstanceIdManagerRaceZooKeeper(this.zk, this.path, this.maxInstanceValue + 1);
       long underlyingid = this.instMgr.tryToGetId(msTimeout);
       if (underlyingid == -1) {
         throw new ReservedInstanceTimeoutException("Unable to allocate an id instance within the timeout allotted (" + msTimeout + ")");
@@ -135,8 +136,12 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
 
   public void checkSessionValidity(boolean allowValidityStateCaching) throws SleetException {
     validateSessionStarted();
-    if (!this.instMgr.sessionValid(allowValidityStateCaching)) {
-      throw new GeneratorSessionException("Underlying " + this.instMgr.getClass().getName() + " implementation lost session validity.");
+    try {
+      if (!this.instMgr.sessionValid(allowValidityStateCaching)) {
+        throw new GeneratorSessionException("Underlying " + this.instMgr.getClass().getName() + " implementation lost session validity.");
+      }
+    } catch (IOException e) {
+      throw new SleetException(e);
     }
   }
 
