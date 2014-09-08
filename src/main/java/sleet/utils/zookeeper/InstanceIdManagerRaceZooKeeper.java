@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Random;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
@@ -54,6 +55,8 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
   private final AtomicBoolean _sessionValid = new AtomicBoolean(true);
   private final int _stopLockingThreshold;
   private final int _startLockingThreshold;
+
+  private final Random _random;
 
   private int _id;
   private boolean _sessionValidCache = true;
@@ -93,6 +96,7 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
     _mustLockPath = path + "/mustLock";
     _startLockingThreshold = (int) Math.floor(_maxInstances * _mustLockThreshold);
     _stopLockingThreshold = (int) Math.floor(_maxInstances * _noLongerMustLockThreshold);
+    _random = new Random(System.currentTimeMillis() + hashCode());
   }
 
   private String tryToCreate(String path) throws IOException {
@@ -349,7 +353,22 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
               _initialStat = _zooKeeper.setData(_assignedPath, Integer.toString(foundUnallocatedId, _nodeNameRadix).getBytes(), assignedPathStat.getVersion());
               allocatedId = foundUnallocatedId;
             } catch (KeeperException e) {
-              // ignore -- someone beat us to this slot
+              /**
+               * someone beat us to this slot, pick a random slot between
+               * collision and max slot, attempt to allocate, otherwise repeat
+               */
+              int randomId = -1;
+              try {
+                randomId = foundUnallocatedId + _random.nextInt((_maxInstances - 1) - foundUnallocatedId);
+                _assignedPath = _zooKeeper.create(_idPath + "/" + Integer.toString(randomId, _nodeNameRadix), null, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
+                Stat assignedPathStat = _zooKeeper.exists(_assignedPath, false);
+                _initialStat = _zooKeeper.setData(_assignedPath, Integer.toString(randomId, _nodeNameRadix).getBytes(), assignedPathStat.getVersion());
+                allocatedId = randomId;
+                LOG.debug("Took random slot " + randomId + " instead of resort after collide.");
+              } catch (KeeperException e2) {
+                LOG.debug("Collided on random slot " + randomId + ".");
+                // ignore -- someone beat us to this slot
+              }
             }
           }
         }
