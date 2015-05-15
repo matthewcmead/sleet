@@ -23,6 +23,8 @@ import java.util.Properties;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.ZooKeeper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import sleet.SleetException;
 import sleet.generators.GeneratorConfigException;
@@ -31,10 +33,12 @@ import sleet.generators.IdGenerator;
 import sleet.id.LongId;
 import sleet.id.LongIdType;
 import sleet.state.IdState;
+import sleet.utils.zookeeper.InstanceIdManagerForwardReservationZooKeeper;
 import sleet.utils.zookeeper.InstanceIdManagerRaceZooKeeper;
 import sleet.utils.zookeeper.ZooKeeperClient;
 
 public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdType> {
+  private static final Logger LOG = LoggerFactory.getLogger(ZooKeeperReservedInstanceIdGenerator.class);
 
   public static final String ZK_SERVER_KEY = "zk.reserved.instance.zk.server";
   public static final String ZK_PATH_KEY = "zk.reserved.instance.zk.path";
@@ -46,14 +50,16 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
   private int maxInstanceValue = -1;
   private ZooKeeper zk = null;
   private String path = null;
-  private InstanceIdManagerRaceZooKeeper instMgr = null;
+  private InstanceIdManagerForwardReservationZooKeeper instMgr = null;
   private LongId id = null;
+  private Properties originalConfig = null;
 
   public ZooKeeperReservedInstanceIdGenerator() {
   }
 
   @Override
   public void beginIdSession(Properties config) throws SleetException {
+    originalConfig = new Properties(config);
     if (this.zk != null) {
       throw new GeneratorSessionException("Session was already started.  Stop session by calling endIdSession() then start session by calling beginIdSession()");
     }
@@ -107,17 +113,19 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
 
     String msTimeoutStr = config.getProperty(MILLISECONDS_TO_WAIT_FOR_ID);
     if (msTimeoutStr == null) {
-      throw new GeneratorConfigException("Missing number of milliseconds to wait on startup, must be specified in configuration properties key \"" + MILLISECONDS_TO_WAIT_FOR_ID + "\".");
+      throw new GeneratorConfigException("Missing number of milliseconds to wait on startup, must be specified in configuration properties key \""
+          + MILLISECONDS_TO_WAIT_FOR_ID + "\".");
     }
     int msTimeout = -1;
     try {
       msTimeout = Integer.valueOf(msTimeoutStr);
     } catch (NumberFormatException e) {
-      throw new GeneratorConfigException("Failed to parse number of milliseconds to wait on startup from value \"" + msTimeoutStr + "\".  The value must be an integer.");
+      throw new GeneratorConfigException("Failed to parse number of milliseconds to wait on startup from value \"" + msTimeoutStr
+          + "\".  The value must be an integer.");
     }
 
     try {
-      this.instMgr = new InstanceIdManagerRaceZooKeeper(this.zk, this.path, this.maxInstanceValue + 1);
+      this.instMgr = new InstanceIdManagerForwardReservationZooKeeper(this.zk, this.path, this.maxInstanceValue + 1);
       long underlyingid = this.instMgr.tryToGetId(msTimeout);
       if (underlyingid == -1) {
         throw new ReservedInstanceTimeoutException("Unable to allocate an id instance within the timeout allotted (" + msTimeout + ")");
@@ -138,16 +146,21 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
     validateSessionStarted();
     try {
       if (!this.instMgr.sessionValid(allowValidityStateCaching)) {
-        throw new GeneratorSessionException("Underlying " + this.instMgr.getClass().getName() + " implementation lost session validity.");
+        // throw new GeneratorSessionException("Underlying " +
+        // this.instMgr.getClass().getName() +
+        // " implementation lost session validity.");
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Terminating existing invalid session and beginning a new one.");
+        }
+        terminateIdSession();
+        beginIdSession(originalConfig);
       }
     } catch (IOException e) {
       throw new SleetException(e);
     }
   }
 
-  @Override
-  public void endIdSession() throws SleetException {
-    checkSessionValidity(false);
+  private void terminateIdSession() throws SleetException {
     try {
       this.instMgr.releaseId(this.id.getId().intValue());
     } catch (IOException e) {
@@ -167,8 +180,19 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
   }
 
   @Override
+  public void endIdSession() throws SleetException {
+    checkSessionValidity(false);
+    terminateIdSession();
+  }
+
+  @Override
   public LongIdType getId(List<IdState<?, ?>> states) throws SleetException {
     checkSessionValidity(true);
+    try {
+      this.id = new LongId(this.instMgr.getCurrentId(), null, this.bitsInInstanceValue);
+    } catch (IOException e) {
+      throw new SleetException(e);
+    }
     return this.id;
   }
 

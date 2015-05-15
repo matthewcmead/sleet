@@ -16,9 +16,14 @@
  */
 package sleet.utils.zookeeper;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 import java.util.Random;
 import java.util.SortedMap;
@@ -38,35 +43,56 @@ import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
-  private static final Logger LOG = LoggerFactory.getLogger(InstanceIdManagerRaceZooKeeper.class);
+public class InstanceIdManagerForwardReservationZooKeeper extends InstanceIdManager {
+  private static final Logger LOG = LoggerFactory.getLogger(InstanceIdManagerForwardReservationZooKeeper.class);
 
-  private static final long _sessionValidityCacheTTL = 1000L;
+  /**
+   * These credentials are used to add authentication to the zookeeper session
+   * and to apply ACLs to the permanent nodes used by this implementation to
+   * reserve an id generation instance. If you are cherrypicking these values
+   * out of this source code to do any manual manipulation of the zookeeper data
+   * stored for sleet, make very sure you know exactly what you are doing or you
+   * could very easily cause the distributed system to generate duplicate ids,
+   * which is very very bad.
+   */
+  private static final String zkAuthUser = "sleet";
+  private static final String zkAuthPassword = "RwcH9O4LjyfqnQOlSKVVk2ByIbTagMJdzHyT4n3Vpbs";
+  private static final byte[] zkAddAuthBytes = (zkAuthUser + ":" + zkAuthPassword).getBytes();
+
+  /**
+   * 
+   */
+
   private static final long _checkThreadPeriod = 10000L;
   private static final int _nodeNameRadix = 16;
   private static final double _mustLockThreshold = 0.99;
   private static final double _noLongerMustLockThreshold = 0.85;
+  private static final long _maxZkClockOffset = 10000L;
+  private static final long _forwardReservationInterval = 60000L;
 
   private final int _maxInstances;
   private final ZooKeeper _zooKeeper;
   private final String _idPath;
+  private final String _procPath;
   private final String _lockPath;
   private final String _mustLockPath;
-  private final AtomicBoolean _sessionValid = new AtomicBoolean(true);
   private final int _stopLockingThreshold;
   private final int _startLockingThreshold;
+
+  private long _zkClockOffset;
 
   private final Random _random;
 
   private int _id;
-  private boolean _sessionValidCache = true;
   private String _assignedPath = null;
-  private Stat _initialStat = null;
+  private Stat _assignedNodeLastStat = null;
   private Thread _sessionChecker = null;
-  private long _lastSessionCacheUpdate = -1;
+  private long _forwardReservation;
   private AtomicBoolean _running = new AtomicBoolean(true);
   private String _lockNodePath = null;
   private String _prevLockNodePath = null;
+  private String _procNodePath = null;
+  private Stat _procNodeInitialStat;
   private final Object _lockLock = new Object();
   private final Watcher _lockWatcher = new Watcher() {
     @Override
@@ -87,12 +113,14 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
     }
   };
 
-  public InstanceIdManagerRaceZooKeeper(ZooKeeper zooKeeper, String path, int maxInstances) throws IOException {
+  public InstanceIdManagerForwardReservationZooKeeper(ZooKeeper zooKeeper, String path, int maxInstances) throws IOException {
     _maxInstances = maxInstances;
     _zooKeeper = zooKeeper;
     tryToCreate(path);
     _idPath = tryToCreate(path + "/id");
+    _procPath = tryToCreate(path + "/proc");
     _lockPath = tryToCreate(path + "/lock");
+    _zooKeeper.addAuthInfo("digest", zkAddAuthBytes);
     _mustLockPath = path + "/mustLock";
     _startLockingThreshold = (int) Math.floor(_maxInstances * _mustLockThreshold);
     _stopLockingThreshold = (int) Math.floor(_maxInstances * _noLongerMustLockThreshold);
@@ -140,7 +168,25 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
 
   @Override
   public int tryToGetId(long millisToWait) throws IOException {
-    LOG.debug(hashCode() + " Trying to get id with timeout " + millisToWait);
+    if (LOG.isDebugEnabled()) {
+      LOG.debug(hashCode() + " Trying to get id with timeout " + millisToWait);
+    }
+
+    String procPathPrefix = _procPath + "/proc_";
+    try {
+      long mymillis = System.currentTimeMillis();
+      _procNodePath = _zooKeeper.create(_procPath + "/proc_", null, Ids.CREATOR_ALL_ACL, CreateMode.EPHEMERAL_SEQUENTIAL);
+      _procNodeInitialStat = _zooKeeper.exists(_procNodePath, false);
+      long zkmillis = _procNodeInitialStat.getCtime();
+      if (Math.abs(mymillis - zkmillis) > _maxZkClockOffset) {
+        throw new IOException("ZooKeeper clock and my clock diverge by " + _maxZkClockOffset + " ms.  Aborting.");
+      }
+      _zkClockOffset = zkmillis - mymillis;
+    } catch (InterruptedException e) {
+      throw new IOException("Interrupted attempting to create proc path.", e);
+    } catch (KeeperException e) {
+      throw new IOException("Unable to create ephemeral sequential node with proc path prefix \"" + procPathPrefix + "\".");
+    }
 
     try {
       final long initialTime = System.currentTimeMillis();
@@ -184,7 +230,9 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
 
               Stat stat = existsIfAvailable(_mustLockPath);
               if (stat != null) {
-                LOG.debug(hashCode() + " Exiting locking mode.");
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug(hashCode() + " Exiting locking mode.");
+                }
 
                 deleteIfExists(_mustLockPath, -1);
               }
@@ -244,7 +292,9 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
     } catch (InterruptedException e) {
       throw new IOException(e);
     }
-    LOG.debug("Escaped loop to allocate an instance id.  Returning -1.");
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Escaped loop to allocate an instance id.  Returning -1.");
+    }
     return -1;
   }
 
@@ -268,7 +318,9 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
         // ignore in case it gets deleted while we're waiting
       }
       synchronized (_lockLock) {
-        LOG.debug(hashCode() + " Waiting to look for our place in the lock again.");
+        if (LOG.isDebugEnabled()) {
+          LOG.debug(hashCode() + " Waiting to look for our place in the lock again.");
+        }
         try {
           _lockLock.wait(TimeUnit.SECONDS.toMillis(1));
         } catch (InterruptedException e) {
@@ -291,7 +343,9 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
       throw new IOException(e);
     }
 
-    LOG.debug(hashCode() + " Waiting for an id slot to become free.");
+    if (LOG.isDebugEnabled()) {
+      LOG.debug(hashCode() + " Waiting for an id slot to become free.");
+    }
     synchronized (_idLock) {
       try {
         _idLock.wait(TimeUnit.SECONDS.toMillis(1));
@@ -308,8 +362,9 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
       if (idstrs.size() < _stopLockingThreshold) {
         Stat stat = existsIfAvailable(_mustLockPath);
         if (stat != null) {
-          LOG.debug(hashCode() + " Exiting locking mode.");
-
+          if (LOG.isDebugEnabled()) {
+            LOG.debug(hashCode() + " Exiting locking mode.");
+          }
           deleteIfExists(_mustLockPath, -1);
         }
       }
@@ -319,15 +374,17 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
       while (allocatedId == -1 && keepRacing && System.currentTimeMillis() < untilMillis) {
         idstrs = _zooKeeper.getChildren(_idPath, false);
         if (idstrs.size() >= _startLockingThreshold && !locked) {
-          LOG.debug(hashCode() + " Entering locking mode.");
+          if (LOG.isDebugEnabled()) {
+            LOG.debug(hashCode() + " Entering locking mode.");
+          }
           tryToCreate(_mustLockPath);
           keepRacing = false;
         } else {
           int foundUnallocatedId = -1;
+          int[] ids = new int[idstrs.size()];
           if (idstrs.isEmpty()) {
             foundUnallocatedId = 0;
           } else {
-            int[] ids = new int[idstrs.size()];
             int counter = 0;
             for (String id : idstrs) {
               ids[counter] = Integer.parseInt(getLeafValueForNode(id), _nodeNameRadix);
@@ -347,10 +404,7 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
           }
           if (foundUnallocatedId != -1) {
             try {
-              _assignedPath = _zooKeeper.create(_idPath + "/" + Integer.toString(foundUnallocatedId, _nodeNameRadix), null, Ids.OPEN_ACL_UNSAFE,
-                  CreateMode.EPHEMERAL);
-              Stat assignedPathStat = _zooKeeper.exists(_assignedPath, false);
-              _initialStat = _zooKeeper.setData(_assignedPath, Integer.toString(foundUnallocatedId, _nodeNameRadix).getBytes(), assignedPathStat.getVersion());
+              assignNode(foundUnallocatedId);
               allocatedId = foundUnallocatedId;
             } catch (KeeperException e) {
               /**
@@ -360,17 +414,46 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
               int randomId = -1;
               try {
                 randomId = foundUnallocatedId + _random.nextInt((_maxInstances - 1) - foundUnallocatedId);
-                _assignedPath = _zooKeeper.create(_idPath + "/" + Integer.toString(randomId, _nodeNameRadix), null, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
-                Stat assignedPathStat = _zooKeeper.exists(_assignedPath, false);
-                _initialStat = _zooKeeper.setData(_assignedPath, Integer.toString(randomId, _nodeNameRadix).getBytes(), assignedPathStat.getVersion());
+                assignNode(randomId);
                 allocatedId = randomId;
-                LOG.debug("Took random slot " + randomId + " instead of resort after collide.");
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("Took random slot " + randomId + " instead of resort after collide.");
+                }
               } catch (KeeperException e2) {
-                LOG.debug("Collided on random slot " + randomId + ".");
-                // ignore -- someone beat us to this slot
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("Collided on random slot " + randomId + ".");
+                } // ignore -- someone beat us to this slot
               }
             }
           }
+          if (allocatedId == -1 && locked) {
+            /**
+             * we didn't find an id but we have the lock, let's see if we can
+             * reap an id
+             */
+            for (int candidateId : ids) {
+              try {
+                String candidatePath = _idPath + "/" + Integer.toString(candidateId, _nodeNameRadix);
+                byte[] data = _zooKeeper.getData(candidatePath, false, null);
+                ReservationInfo reservation = getReservationFromBytes(data);
+                if ((reservation.reservationEndpoint - _zkClockOffset) > (System.currentTimeMillis() - 120000L)
+                    && _zooKeeper.exists(reservation.procNodePath, false) == null) {
+                  /**
+                   * The reservation is two minutes old in zookeeper time and
+                   * there is no ephemeral node existing for this reservation
+                   */
+                  _zooKeeper.delete(candidatePath, -1);
+                  assignNode(candidateId);
+                  allocatedId = candidateId;
+                }
+              } catch (KeeperException e) {
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("Had an issue with reaping ids using ZooKeeper", e);
+                } // ignore -- don't try to reap this spot
+              }
+            }
+          }
+
         }
       }
       return allocatedId;
@@ -379,6 +462,42 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
     } catch (KeeperException e) {
       throw new IOException(e);
     }
+  }
+
+  private void assignNode(int id) throws KeeperException, InterruptedException, IOException {
+    _assignedPath = _zooKeeper.create(_idPath + "/" + Integer.toString(id, _nodeNameRadix), null, Ids.CREATOR_ALL_ACL, CreateMode.PERSISTENT);
+    long reservation = System.currentTimeMillis() + _forwardReservationInterval;
+    setReservation(reservation);
+  }
+
+  private void setReservation(long reservation) throws KeeperException, InterruptedException, IOException {
+    long now = System.currentTimeMillis();
+    if (_assignedNodeLastStat != null) {
+      _assignedNodeLastStat = _zooKeeper.setData(_assignedPath, getBytesForReservation(new ReservationInfo(reservation + _zkClockOffset, _procNodePath)),
+          _assignedNodeLastStat.getVersion());
+    } else {
+      _assignedNodeLastStat = _zooKeeper.setData(_assignedPath, getBytesForReservation(new ReservationInfo(reservation + _zkClockOffset, _procNodePath)), -1);
+    }
+    _forwardReservation = reservation;
+    _zkClockOffset = _assignedNodeLastStat.getMtime() - now;
+  }
+
+  private static byte[] getBytesForReservation(ReservationInfo reservation) throws IOException {
+    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+    DataOutputStream dos = new DataOutputStream(bos);
+    dos.writeLong(reservation.reservationEndpoint);
+    dos.writeUTF(reservation.procNodePath);
+    dos.close();
+    bos.close();
+    return bos.toByteArray();
+  }
+
+  private static ReservationInfo getReservationFromBytes(byte[] bytes) throws IOException {
+    ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
+    DataInputStream dis = new DataInputStream(bis);
+    long reservationEndpoint = dis.readLong();
+    String procNodePath = dis.readUTF();
+    return new ReservationInfo(reservationEndpoint, procNodePath);
   }
 
   private static String getLeafValueForNode(String path) {
@@ -392,21 +511,27 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
         /**
          * We do not already have a node in the lock queue
          */
-        _lockNodePath = _zooKeeper.create(_lockPath + "/lock_", null, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
-        LOG.debug(hashCode() + " Allocated lock entry in lock queue at path " + _lockNodePath);
+        _lockNodePath = _zooKeeper.create(_lockPath + "/lock_", null, Ids.CREATOR_ALL_ACL, CreateMode.EPHEMERAL_SEQUENTIAL);
+        if (LOG.isDebugEnabled()) {
+          LOG.debug(hashCode() + " Allocated lock entry in lock queue at path " + _lockNodePath);
+        }
       }
       int lockNumber = Integer.parseInt(_lockNodePath.substring(_lockNodePath.lastIndexOf('_') + 1));
       List<String> children = new ArrayList<String>(_zooKeeper.getChildren(_lockPath, false));
       if (children.size() < 1) {
         throw new IOException("Children of path [" + _lockPath + "] should never be 0.");
       }
-      LOG.debug(hashCode() + " Looking through " + children.size() + " children to see if we own the lock.");
+      if (LOG.isDebugEnabled()) {
+        LOG.debug(hashCode() + " Looking through " + children.size() + " children to see if we own the lock.");
+      }
       TreeMap<Integer, String> sortedChildren = new TreeMap<Integer, String>();
       for (String child : children) {
         sortedChildren.put(Integer.parseInt(child.substring(child.lastIndexOf('_') + 1)), child);
       }
       int lockOwnerNumber = sortedChildren.keySet().iterator().next();
-      LOG.debug(hashCode() + " First child number in lock dir is " + lockOwnerNumber + " and my number is " + lockNumber);
+      if (LOG.isDebugEnabled()) {
+        LOG.debug(hashCode() + " First child number in lock dir is " + lockOwnerNumber + " and my number is " + lockNumber);
+      }
       if (lockNumber == lockOwnerNumber) {
         return true;
       }
@@ -426,8 +551,9 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
       throw new IOException("Cannot release id=" + id + " when we own id=" + _id);
     }
 
-    LOG.debug(hashCode() + " Releasing id=" + id);
-
+    if (LOG.isDebugEnabled()) {
+      LOG.debug(hashCode() + " Releasing id=" + id);
+    }
     /**
      * Disrupt the session checker thread
      */
@@ -437,6 +563,7 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
     }
     try {
       _zooKeeper.delete(_assignedPath, -1);
+      _zooKeeper.delete(_procNodePath, -1);
     } catch (InterruptedException e) {
       throw new IOException(e);
     } catch (KeeperException e) {
@@ -445,6 +572,10 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
   }
 
   private void startSessionCheckerThread() {
+    /**
+     * TODO MCM when we are <= 10s of our reservation, update the reservation,
+     * validate that our initial stats are the same
+     */
     _sessionChecker = new Thread() {
       @Override
       public void run() {
@@ -458,13 +589,37 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
             return;
           }
           try {
-            Stat currentStat = _zooKeeper.exists(_assignedPath, false);
-            if (!_initialStat.equals(currentStat)) {
-              _sessionValid.set(false);
+            long now = System.currentTimeMillis();
+            if (now > _forwardReservation) {
+              /**
+               * the main thread must get a new session once we pass our
+               * reservation, do nothing and let it happen
+               */
               return;
+            } else if ((_forwardReservation - now) <= _checkThreadPeriod) {
+              /**
+               * Check validity of stats
+               */
+              Stat currentStat = _zooKeeper.exists(_assignedPath, false);
+              Stat currentProcNodeStat = _zooKeeper.exists(_procNodePath, false);
+              if (!_assignedNodeLastStat.equals(currentStat) || !_procNodeInitialStat.equals(currentProcNodeStat)) {
+                /**
+                 * the main thread must get a new session once we pass our
+                 * reservation, do nothing and let it happen
+                 */
+                return;
+              } else {
+                /**
+                 * Update reservation out another period
+                 */
+                long reservation = System.currentTimeMillis() + _forwardReservationInterval;
+                setReservation(reservation);
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("Just increased reservation to zk time: {}", new Date(reservation));
+                }
+              }
             }
           } catch (Exception e) {
-            _sessionValid.set(false);
             return;
           }
         }
@@ -476,7 +631,9 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
 
   private void unlock() throws IOException {
     if (_lockNodePath != null) {
-      LOG.debug(hashCode() + " Unlocking.");
+      if (LOG.isDebugEnabled()) {
+        LOG.debug(hashCode() + " Unlocking.");
+      }
       try {
         _zooKeeper.delete(_lockNodePath, -1);
         _lockNodePath = null;
@@ -491,37 +648,22 @@ public class InstanceIdManagerRaceZooKeeper extends InstanceIdManager {
 
   @Override
   public boolean sessionValid(boolean allowValidityStateCaching) throws IOException {
-    long now = System.currentTimeMillis();
-    Exception caughtException = null;
-    if (allowValidityStateCaching) {
-      if (now - _lastSessionCacheUpdate > _sessionValidityCacheTTL) {
-        _lastSessionCacheUpdate = now;
-        _sessionValidCache = _sessionValid.get();
-      }
-    } else {
-      /**
-       * When we aren't allow to cache state, go check zookeeper ourselves
-       */
-      try {
-        Stat currentStat = _zooKeeper.exists(_assignedPath, false);
-        if (!_initialStat.equals(currentStat)) {
-          _sessionValid.set(false);
-        }
-      } catch (Exception e) {
-        _sessionValid.set(false);
-        caughtException = e;
-      }
-      _lastSessionCacheUpdate = now;
-      _sessionValidCache = _sessionValid.get();
-    }
-    if (caughtException != null) {
-      throw new IOException(caughtException);
-    }
-    return _sessionValidCache;
+    return System.currentTimeMillis() <= _forwardReservation;
   }
-  
+
   @Override
   public int getCurrentId() throws IOException {
     return _id;
+  }
+
+  private static class ReservationInfo {
+    long reservationEndpoint;
+    String procNodePath;
+
+    public ReservationInfo(long reservationEndpoint, String procNodePath) {
+      super();
+      this.reservationEndpoint = reservationEndpoint;
+      this.procNodePath = procNodePath;
+    }
   }
 }

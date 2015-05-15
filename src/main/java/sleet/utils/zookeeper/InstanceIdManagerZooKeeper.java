@@ -53,6 +53,7 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
   private Thread _sessionChecker = null;
   private long _lastSessionCacheUpdate = -1;
   private AtomicBoolean _running = new AtomicBoolean(true);
+  private int _id;
 
   public InstanceIdManagerZooKeeper(ZooKeeper zooKeeper, String path, int maxInstances) throws IOException {
     _maxInstances = maxInstances;
@@ -126,7 +127,8 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
         }
         // new node is in the top children, assign a new id.
         if (count < _maxInstances) {
-          return assignNode(newNode);
+          _id = assignNode(newNode);
+          return _id;
         } else {
           if (millisToWait != -1 && (System.currentTimeMillis() - initialTime >= millisToWait)) {
             _zooKeeper.delete(newPath, -1);
@@ -359,4 +361,10 @@ public class InstanceIdManagerZooKeeper extends InstanceIdManager {
     }
     return _sessionValidCache;
   }
+  
+  @Override
+  public int getCurrentId() throws IOException {
+    return _id;
+  }
+
 }

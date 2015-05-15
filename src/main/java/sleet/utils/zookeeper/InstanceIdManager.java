@@ -36,6 +36,7 @@ public abstract class InstanceIdManager {
    */
   public abstract int tryToGetId(long millisToWait) throws IOException;
   public abstract boolean sessionValid(boolean allowValidityStateCaching) throws IOException;
+  public abstract int getCurrentId() throws IOException;
   public abstract void releaseId(int id) throws IOException;
 
 }
