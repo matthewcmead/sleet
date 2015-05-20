@@ -41,7 +41,7 @@ import sleet.state.IdState;
 public class SleetIdGenerator implements IdGenerator<LongIdType> {
   public static final String WAIT_ON_SEQUENCE_OVERRUN_KEY = "sleet.wait.on.sequence.overrun";
 
-  private final List<IdGenerator<? extends IdType<?, ?>>> subgens = new ArrayList<IdGenerator<? extends IdType<?, ?>>>(4);
+  final List<IdGenerator<? extends IdType<?, ?>>> subgens = new ArrayList<IdGenerator<? extends IdType<?, ?>>>(4);
 
   private boolean waitOnSeqOverrun;
 
@@ -73,9 +73,8 @@ public class SleetIdGenerator implements IdGenerator<LongIdType> {
 
     String waitOnSeqOverrunStr = config.getProperty(WAIT_ON_SEQUENCE_OVERRUN_KEY);
     if (waitOnSeqOverrunStr == null) {
-      throw new GeneratorConfigException(
-          "Missing flag for whether to wait on sequence overrun during id generation, must be specified in configuration properties key \""
-              + WAIT_ON_SEQUENCE_OVERRUN_KEY + "\".");
+      throw new GeneratorConfigException("Missing flag for whether to wait on sequence overrun during id generation, must be specified in configuration properties key \""
+          + WAIT_ON_SEQUENCE_OVERRUN_KEY + "\".");
     }
     this.waitOnSeqOverrun = Boolean.parseBoolean(waitOnSeqOverrunStr);
   }
@@ -138,11 +137,9 @@ public class SleetIdGenerator implements IdGenerator<LongIdType> {
               throw new IdOverrunException("Time dependent sequence overflowed and Sleet is currently configured not to wait until new time value to proceed.");
             }
           } else if (subid.getError() instanceof TimeIdReverseSkewError) {
-            throw new GeneratorException("Time id component encountered reverse time skew and did not properly handle it. Messages was: "
-                + subid.getError().getErrorMessage());
+            throw new GeneratorException("Time id component encountered reverse time skew and did not properly handle it. Messages was: " + subid.getError().getErrorMessage());
           } else {
-            throw new GeneratorException("Unknown IdError encountered: " + subid.getError().getClass().getName() + "; Its message: "
-                + subid.getError().getErrorMessage());
+            throw new GeneratorException("Unknown IdError encountered: " + subid.getError().getClass().getName() + "; Its message: " + subid.getError().getErrorMessage());
           }
         } else {
           @SuppressWarnings({ "unchecked", "rawtypes" })
@@ -152,8 +149,7 @@ public class SleetIdGenerator implements IdGenerator<LongIdType> {
         }
       }
       if (numBits > 64) {
-        throw new IdOverflowException("Sleet is prepared to use 64 bits for id output, but the underlying component id generators produced a total of "
-            + numBits + " bits of id data.");
+        throw new IdOverflowException("Sleet is prepared to use 64 bits for id output, but the underlying component id generators produced a total of " + numBits + " bits of id data.");
       }
 
       long output = 0;

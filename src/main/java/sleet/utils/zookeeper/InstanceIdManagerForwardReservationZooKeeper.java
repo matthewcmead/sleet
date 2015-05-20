@@ -25,12 +25,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
+import java.util.Properties;
 import java.util.Random;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.apache.commons.beanutils.ConvertUtils;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.Code;
@@ -63,12 +65,20 @@ public class InstanceIdManagerForwardReservationZooKeeper extends InstanceIdMana
    * 
    */
 
-  private static final long _checkThreadPeriod = 10000L;
-  private static final int _nodeNameRadix = 16;
-  private static final double _mustLockThreshold = 0.99;
-  private static final double _noLongerMustLockThreshold = 0.85;
-  private static final long _maxZkClockOffset = 10000L;
-  private static final long _forwardReservationInterval = 60000L;
+  public static String zkFwdReservationReservationCheckPeriod = "zk.instmgr.fwdreservation.reservation.check.period.ms";
+  public static String zkFwdReservationMustLockThreshold = "zk.instmgr.fwdreservation.must.lock.threshold.fraction";
+  public static String zkFwdReservationStopLockThreshold = "zk.instmgr.fwdreservation.stop.lock.threshold.fraction";
+  public static String zkFwdReservationMaxZkClockOffset = "zk.instmgr.fwdreservation.max.zk.clock.offset.ms";
+  public static String zkFwdReservationReservationLength = "zk.instmgr.fwdreservation.reservation.length.ms";
+  public static String zkFwdReservationReservationReapGrace = "zk.instmgr.fwdreservation.reservation.reap.graceperiod.ms";
+
+  private long _checkThreadPeriod = 10000L;
+  private int _nodeNameRadix = 16;
+  private double _mustLockThreshold = 0.99;
+  private double _noLongerMustLockThreshold = 0.85;
+  private long _maxZkClockOffset = 10000L;
+  private long _forwardReservationInterval = 60000L;
+  private long _reservationReapGracePeriod = 120000L;
 
   private final int _maxInstances;
   private final ZooKeeper _zooKeeper;
@@ -113,7 +123,7 @@ public class InstanceIdManagerForwardReservationZooKeeper extends InstanceIdMana
     }
   };
 
-  public InstanceIdManagerForwardReservationZooKeeper(ZooKeeper zooKeeper, String path, int maxInstances) throws IOException {
+  public InstanceIdManagerForwardReservationZooKeeper(ZooKeeper zooKeeper, String path, int maxInstances, Properties config) throws IOException {
     _maxInstances = maxInstances;
     _zooKeeper = zooKeeper;
     tryToCreate(path);
@@ -125,6 +135,61 @@ public class InstanceIdManagerForwardReservationZooKeeper extends InstanceIdMana
     _startLockingThreshold = (int) Math.floor(_maxInstances * _mustLockThreshold);
     _stopLockingThreshold = (int) Math.floor(_maxInstances * _noLongerMustLockThreshold);
     _random = new Random(System.currentTimeMillis() + hashCode());
+    String val;
+    val = config.getProperty(zkFwdReservationReservationCheckPeriod);
+    if (val != null) {
+      Object o = ConvertUtils.convert(val, Long.class);
+      if (o instanceof Long) {
+        _checkThreadPeriod = (Long) o;
+      } else {
+        throw new IOException("Could not coerce " + zkFwdReservationReservationCheckPeriod + " value \"" + val + "\" to a long.");
+      }
+    }
+    val = config.getProperty(zkFwdReservationMustLockThreshold);
+    if (val != null) {
+      Object o = ConvertUtils.convert(val, Double.class);
+      if (o instanceof Double) {
+        _mustLockThreshold = (Double) o;
+      } else {
+        throw new IOException("Could not coerce " + zkFwdReservationMustLockThreshold + " value \"" + val + "\" to a double.");
+      }
+    }
+    val = config.getProperty(zkFwdReservationStopLockThreshold);
+    if (val != null) {
+      Object o = ConvertUtils.convert(val, Double.class);
+      if (o instanceof Double) {
+        _noLongerMustLockThreshold = (Double) o;
+      } else {
+        throw new IOException("Could not coerce " + zkFwdReservationStopLockThreshold + " value \"" + val + "\" to a double.");
+      }
+    }
+    val = config.getProperty(zkFwdReservationMaxZkClockOffset);
+    if (val != null) {
+      Object o = ConvertUtils.convert(val, Long.class);
+      if (o instanceof Long) {
+        _maxZkClockOffset = (Long) o;
+      } else {
+        throw new IOException("Could not coerce " + zkFwdReservationMaxZkClockOffset + " value \"" + val + "\" to a long.");
+      }
+    }
+    val = config.getProperty(zkFwdReservationReservationLength);
+    if (val != null) {
+      Object o = ConvertUtils.convert(val, Long.class);
+      if (o instanceof Long) {
+        _forwardReservationInterval = (Long) o;
+      } else {
+        throw new IOException("Could not coerce " + zkFwdReservationReservationLength + " value \"" + val + "\" to a long.");
+      }
+    }
+    val = config.getProperty(zkFwdReservationReservationReapGrace);
+    if (val != null) {
+      Object o = ConvertUtils.convert(val, Long.class);
+      if (o instanceof Long) {
+        _reservationReapGracePeriod = (Long) o;
+      } else {
+        throw new IOException("Could not coerce " + zkFwdReservationReservationReapGrace + " value \"" + val + "\" to a long.");
+      }
+    }
   }
 
   private String tryToCreate(String path) throws IOException {
@@ -293,7 +358,7 @@ public class InstanceIdManagerForwardReservationZooKeeper extends InstanceIdMana
       throw new IOException(e);
     }
     if (LOG.isDebugEnabled()) {
-      LOG.debug("Escaped loop to allocate an instance id.  Returning -1.");
+      LOG.debug("{} Escaped loop to allocate an instance id.  Returning -1.", hashCode());
     }
     return -1;
   }
@@ -411,44 +476,74 @@ public class InstanceIdManagerForwardReservationZooKeeper extends InstanceIdMana
                * someone beat us to this slot, pick a random slot between
                * collision and max slot, attempt to allocate, otherwise repeat
                */
+              if (LOG.isDebugEnabled()) {
+                LOG.debug("{} Collided on sort-chosen slot {}.", hashCode(), foundUnallocatedId);
+              }
               int randomId = -1;
               try {
                 randomId = foundUnallocatedId + _random.nextInt((_maxInstances - 1) - foundUnallocatedId);
                 assignNode(randomId);
                 allocatedId = randomId;
                 if (LOG.isDebugEnabled()) {
-                  LOG.debug("Took random slot " + randomId + " instead of resort after collide.");
+                  LOG.debug("{} Took random slot {} instead of resort after collide.", hashCode(), randomId);
                 }
               } catch (KeeperException e2) {
                 if (LOG.isDebugEnabled()) {
-                  LOG.debug("Collided on random slot " + randomId + ".");
+                  LOG.debug("{} Collided on random slot {}.", hashCode(), randomId);
                 } // ignore -- someone beat us to this slot
               }
             }
           }
           if (allocatedId == -1 && locked) {
             /**
+             * ensure we only take one shot to reap the id before waiting
+             */
+            keepRacing = false;
+            /**
              * we didn't find an id but we have the lock, let's see if we can
              * reap an id
              */
-            for (int candidateId : ids) {
+            for (int idindex = 0; idindex < ids.length && allocatedId == -1; idindex++) {
+              int candidateId = ids[idindex];
               try {
                 String candidatePath = _idPath + "/" + Integer.toString(candidateId, _nodeNameRadix);
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("{} Examinining candidatePath {} to determine if it can be reaped.", hashCode(), candidatePath);
+                }
                 byte[] data = _zooKeeper.getData(candidatePath, false, null);
                 ReservationInfo reservation = getReservationFromBytes(data);
-                if ((reservation.reservationEndpoint - _zkClockOffset) > (System.currentTimeMillis() - 120000L)
-                    && _zooKeeper.exists(reservation.procNodePath, false) == null) {
-                  /**
-                   * The reservation is two minutes old in zookeeper time and
-                   * there is no ephemeral node existing for this reservation
-                   */
-                  _zooKeeper.delete(candidatePath, -1);
-                  assignNode(candidateId);
-                  allocatedId = candidateId;
+                long now = System.currentTimeMillis();
+                if ((reservation.reservationEndpoint - _zkClockOffset + _reservationReapGracePeriod) < now) {
+                  if (_zooKeeper.exists(reservation.procNodePath, false) == null) {
+                    if (LOG.isDebugEnabled()) {
+                      LOG.debug("{} Node: {}; lease: {}; now: {}; now-lease: {}; gracePeriod: {}", new Object[] { hashCode(), candidatePath, (Long) (reservation.reservationEndpoint - _zkClockOffset),
+                          now, (Long) (now - (reservation.reservationEndpoint - _zkClockOffset)), (Long) _reservationReapGracePeriod });
+                    }
+                    /**
+                     * The reservation is old enough in zookeeper time and there
+                     * is no ephemeral node existing for this reservation, so
+                     * reap it.
+                     */
+                    _zooKeeper.delete(candidatePath, -1);
+                    assignNode(candidateId);
+                    allocatedId = candidateId;
+                    if (LOG.isDebugEnabled()) {
+                      LOG.debug("{} Reaped {} and got allocatedId={}", new Object[] { hashCode(), candidatePath, allocatedId });
+                    }
+                  } else {
+                    if (LOG.isDebugEnabled()) {
+                      LOG.debug("{} Could not reap {} because its procNode {} was still in existence.", new Object[] { hashCode(), candidatePath, reservation.procNodePath });
+                    }
+                  }
+                } else {
+                  if (LOG.isDebugEnabled()) {
+                    LOG.debug("{} Node: {}; lease: {}; now: {}; now-lease: {}; gracePeriod: {}", new Object[] { hashCode(), candidatePath, (Long) (reservation.reservationEndpoint - _zkClockOffset),
+                        now, (Long) (now - (reservation.reservationEndpoint - _zkClockOffset)), (Long) _reservationReapGracePeriod });
+                  }
                 }
               } catch (KeeperException e) {
                 if (LOG.isDebugEnabled()) {
-                  LOG.debug("Had an issue with reaping ids using ZooKeeper", e);
+                  LOG.debug(hashCode() + " Had an issue with reaping ids using ZooKeeper", e);
                 } // ignore -- don't try to reap this spot
               }
             }
@@ -471,12 +566,19 @@ public class InstanceIdManagerForwardReservationZooKeeper extends InstanceIdMana
   }
 
   private void setReservation(long reservation) throws KeeperException, InterruptedException, IOException {
-    long now = System.currentTimeMillis();
+    long now;
     if (_assignedNodeLastStat != null) {
-      _assignedNodeLastStat = _zooKeeper.setData(_assignedPath, getBytesForReservation(new ReservationInfo(reservation + _zkClockOffset, _procNodePath)),
-          _assignedNodeLastStat.getVersion());
+      now = System.currentTimeMillis();
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("{} Existing _assignedNodeLastStat: {}", hashCode(), _assignedNodeLastStat);
+      }
+      _assignedNodeLastStat = _zooKeeper.setData(_assignedPath, getBytesForReservation(new ReservationInfo(reservation + _zkClockOffset, _procNodePath)), _assignedNodeLastStat.getVersion());
     } else {
+      now = System.currentTimeMillis();
       _assignedNodeLastStat = _zooKeeper.setData(_assignedPath, getBytesForReservation(new ReservationInfo(reservation + _zkClockOffset, _procNodePath)), -1);
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("{} Assigned _assignedNodeLastStat: {}", hashCode(), _assignedNodeLastStat);
+      }
     }
     _forwardReservation = reservation;
     _zkClockOffset = _assignedNodeLastStat.getMtime() - now;
@@ -573,7 +675,7 @@ public class InstanceIdManagerForwardReservationZooKeeper extends InstanceIdMana
 
   private void startSessionCheckerThread() {
     /**
-     * TODO MCM when we are <= 10s of our reservation, update the reservation,
+     * MCM when we are <= 10s of our reservation, update the reservation,
      * validate that our initial stats are the same
      */
     _sessionChecker = new Thread() {
@@ -615,7 +717,7 @@ public class InstanceIdManagerForwardReservationZooKeeper extends InstanceIdMana
                 long reservation = System.currentTimeMillis() + _forwardReservationInterval;
                 setReservation(reservation);
                 if (LOG.isDebugEnabled()) {
-                  LOG.debug("Just increased reservation to zk time: {}", new Date(reservation));
+                  LOG.debug("{} Just increased reservation to zk time: {}", hashCode(), new Date(reservation));
                 }
               }
             }

@@ -34,7 +34,6 @@ import sleet.id.LongId;
 import sleet.id.LongIdType;
 import sleet.state.IdState;
 import sleet.utils.zookeeper.InstanceIdManagerForwardReservationZooKeeper;
-import sleet.utils.zookeeper.InstanceIdManagerRaceZooKeeper;
 import sleet.utils.zookeeper.ZooKeeperClient;
 
 public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdType> {
@@ -48,13 +47,17 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
 
   private int bitsInInstanceValue = -1;
   private int maxInstanceValue = -1;
-  private ZooKeeper zk = null;
+  ZooKeeper zk = null;
   private String path = null;
   private InstanceIdManagerForwardReservationZooKeeper instMgr = null;
   private LongId id = null;
   private Properties originalConfig = null;
 
   public ZooKeeperReservedInstanceIdGenerator() {
+  }
+
+  ZooKeeper getZk() {
+    return zk;
   }
 
   @Override
@@ -113,19 +116,17 @@ public class ZooKeeperReservedInstanceIdGenerator implements IdGenerator<LongIdT
 
     String msTimeoutStr = config.getProperty(MILLISECONDS_TO_WAIT_FOR_ID);
     if (msTimeoutStr == null) {
-      throw new GeneratorConfigException("Missing number of milliseconds to wait on startup, must be specified in configuration properties key \""
-          + MILLISECONDS_TO_WAIT_FOR_ID + "\".");
+      throw new GeneratorConfigException("Missing number of milliseconds to wait on startup, must be specified in configuration properties key \"" + MILLISECONDS_TO_WAIT_FOR_ID + "\".");
     }
     int msTimeout = -1;
     try {
       msTimeout = Integer.valueOf(msTimeoutStr);
     } catch (NumberFormatException e) {
-      throw new GeneratorConfigException("Failed to parse number of milliseconds to wait on startup from value \"" + msTimeoutStr
-          + "\".  The value must be an integer.");
+      throw new GeneratorConfigException("Failed to parse number of milliseconds to wait on startup from value \"" + msTimeoutStr + "\".  The value must be an integer.");
     }
 
     try {
-      this.instMgr = new InstanceIdManagerForwardReservationZooKeeper(this.zk, this.path, this.maxInstanceValue + 1);
+      this.instMgr = new InstanceIdManagerForwardReservationZooKeeper(this.zk, this.path, this.maxInstanceValue + 1, config);
       long underlyingid = this.instMgr.tryToGetId(msTimeout);
       if (underlyingid == -1) {
         throw new ReservedInstanceTimeoutException("Unable to allocate an id instance within the timeout allotted (" + msTimeout + ")");
