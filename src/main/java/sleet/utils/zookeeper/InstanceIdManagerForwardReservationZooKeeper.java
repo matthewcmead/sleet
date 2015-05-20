@@ -511,11 +511,18 @@ public class InstanceIdManagerForwardReservationZooKeeper extends InstanceIdMana
                   LOG.debug("{} Examinining candidatePath {} to determine if it can be reaped.", hashCode(), candidatePath);
                 }
                 byte[] data = _zooKeeper.getData(candidatePath, false, null);
-                ReservationInfo reservation = getReservationFromBytes(data);
+                ReservationInfo reservation = null;
+                try {
+                  if (data != null && data.length > 0) {
+                    reservation = getReservationFromBytes(data);
+                  }
+                } catch (IOException e) {
+                  // ignore
+                }
                 long now = System.currentTimeMillis();
-                if ((reservation.reservationEndpoint - _zkClockOffset + _reservationReapGracePeriod) < now) {
-                  if (_zooKeeper.exists(reservation.procNodePath, false) == null) {
-                    if (LOG.isDebugEnabled()) {
+                if (reservation == null || (reservation.reservationEndpoint - _zkClockOffset + _reservationReapGracePeriod) < now) {
+                  if (reservation == null || _zooKeeper.exists(reservation.procNodePath, false) == null) {
+                    if (LOG.isDebugEnabled() && reservation != null) {
                       LOG.debug("{} Node: {}; lease: {}; now: {}; now-lease: {}; gracePeriod: {}", new Object[] { hashCode(), candidatePath, (Long) (reservation.reservationEndpoint - _zkClockOffset),
                           now, (Long) (now - (reservation.reservationEndpoint - _zkClockOffset)), (Long) _reservationReapGracePeriod });
                     }

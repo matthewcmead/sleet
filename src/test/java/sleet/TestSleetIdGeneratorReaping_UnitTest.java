@@ -113,9 +113,9 @@ public class TestSleetIdGeneratorReaping_UnitTest {
     props.setProperty("zk.instmgr.fwdreservation.reservation.check.period.ms", "500");
     props.setProperty("zk.instmgr.fwdreservation.must.lock.threshold.fraction", "0.99");
     props.setProperty("zk.instmgr.fwdreservation.stop.lock.threshold.fraction", "0.90");
-    props.setProperty("zk.instmgr.fwdreservation.max.zk.clock.offset.ms", "100");
+    props.setProperty("zk.instmgr.fwdreservation.max.zk.clock.offset.ms", "300");
     props.setProperty("zk.instmgr.fwdreservation.reservation.length.ms", "3000");
-    props.setProperty("zk.instmgr.fwdreservation.reservation.reap.graceperiod.ms", "8000");
+    props.setProperty("zk.instmgr.fwdreservation.reservation.reap.graceperiod.ms", "6000");
   }
 
   @Test
@@ -135,6 +135,7 @@ public class TestSleetIdGeneratorReaping_UnitTest {
             setupProperties(props);
             gen.beginIdSession(props);
             ZooKeeperReservedInstanceIdGenerator zkGen = getZkGen(gen);
+            System.out.println("Dropping session on instance id " + zkGen.getId(null).getId());
             assertNotNull(zkGen);
             ZooKeeper zk = ZooKeeperReservedInstanceIdGeneratorProxy.getZk(zkGen);
             assertNotNull(zk);
@@ -152,6 +153,10 @@ public class TestSleetIdGeneratorReaping_UnitTest {
       };
       threads[instance] = t;
       t.start();
+      /**
+       * Sleep to ensure there's no race for the slots we're going to abort
+       */
+      Thread.sleep(TimeUnit.SECONDS.toMillis(1));
     }
     for (int instance = NUM_ABORTING_INSTANCES; instance < threads.length; instance++) {
       Thread t = new Thread() {
