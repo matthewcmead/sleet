@@ -54,11 +54,7 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
     this.timeCalc = null;
   }
 
-  @Override
-  public void beginIdSession(Properties config) throws SleetException {
-    if (this.timeCalc != null) {
-      throw new GeneratorSessionException("Session was already started.  Stop session by calling endIdSession() then start session by calling beginIdSession()");
-    }
+  public void configure(Properties config) throws SleetException {
     String epochStr = config.getProperty(EPOCH_KEY);
     if (epochStr == null) {
       throw new GeneratorConfigException("Missing epoch for time calculation, must be specified in configuration properties key \"" + EPOCH_KEY + "\".");
@@ -100,8 +96,6 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
       throw new GeneratorConfigException("Failed to parse number of bits from value \"" + bitsStr + "\".  The value must be an integer.");
     }
 
-    this.timeCalc = new TimeCalculator(epoch, granularityMs, TimeUnit.MILLISECONDS, bits);
-
     String maxWaitAfterBackwardClockSkewStr = config.getProperty(MAX_WAIT_AFTER_BACKWARD_CLOCK_SKEW_KEY);
     if (maxWaitAfterBackwardClockSkewStr == null) {
       throw new GeneratorConfigException("Missing maximum wait (in ms) after backward time skew, must be specified in configuration properties key \"" + MAX_WAIT_AFTER_BACKWARD_CLOCK_SKEW_KEY + "\".");
@@ -114,6 +108,20 @@ public class TimeIdGenerator implements IdGenerator<TimeIdType> {
     }
 
     this.maxWaitAfterBackwardClockSkew = maxWaitAfterBackwardClockSkew;
+
+    this.timeCalc = new TimeCalculator(epoch, granularityMs, TimeUnit.MILLISECONDS, bits);
+  }
+  
+  @Override
+  public void beginIdSession(Properties config) throws SleetException {
+    if (this.timeCalc != null) {
+      throw new GeneratorSessionException("Session was already started.  Stop session by calling endIdSession() then start session by calling beginIdSession()");
+    }
+    this.configure(config);
+  }
+  
+  public TimeCalculator getTimeCalculator() {
+    return this.timeCalc;
   }
 
   @Override

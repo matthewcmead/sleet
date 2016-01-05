@@ -144,6 +144,12 @@ public class TimeCalculator {
       lastval = val;
     }
     System.out.println("Calculated " + countinms + " timevalues in the last " + tc.granularity + "ms.");
+    for (int i = 0; i < 100; i++) {
+      long time = System.currentTimeMillis();
+      long val = tc.timeValue();
+      long timefromval = tc.millisSinceJavaEpochUTC(val);
+      System.out.println("Time difference: " + (timefromval - time));
+    }
   }
 
   public long getEpoch() {

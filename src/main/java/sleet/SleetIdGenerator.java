@@ -175,6 +175,10 @@ public class SleetIdGenerator implements IdGenerator<LongIdType> {
       return new LongId(output, null, 64);
     }
   }
+  
+  public long getTimeValue(long sleetId, int numTimeBits) {
+    return Long.rotateRight(sleetId, 64 - numTimeBits) & (1L << numTimeBits);
+  }
 
   static String paddedBinary(long value) {
     return String.format("%64s", Long.toBinaryString(value)).replace(' ', '0');
