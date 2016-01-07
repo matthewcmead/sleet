@@ -177,7 +177,7 @@ public class SleetIdGenerator implements IdGenerator<LongIdType> {
   }
   
   public long getTimeValue(long sleetId, int numTimeBits) {
-    return Long.rotateRight(sleetId, 64 - numTimeBits) & (1L << numTimeBits);
+    return Long.rotateRight(sleetId, 64 - numTimeBits) & ((1L << numTimeBits) - 1);
   }
 
   static String paddedBinary(long value) {
